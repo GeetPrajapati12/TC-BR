@@ -4,14 +4,14 @@ import dbConnect from "@/lib/mongodb"
 import User from "@/models/User"
 import ActivityLog from "@/models/ActivityLog"
 
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
+const JWT_SECRET = process.env.JWT_SECRET
 
 export async function POST(request) {
   try {
-    await dbConnect()
-
     const authHeader = request.headers.get("authorization")
     if (authHeader && authHeader.startsWith("Bearer ")) {
+      await dbConnect()
+
       const token = authHeader.substring(7)
       try {
         const decoded = jwt.verify(token, JWT_SECRET)

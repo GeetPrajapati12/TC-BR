@@ -5,7 +5,7 @@ import TestCase from "@/models/TestCase"
 import User from "@/models/User"
 import ActivityLog from "@/models/ActivityLog"
 
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
+const JWT_SECRET = process.env.JWT_SECRET
 
 async function getAuthenticatedUser(request) {
   const authHeader = request.headers.get("authorization")
@@ -15,7 +15,7 @@ async function getAuthenticatedUser(request) {
 
   const token = authHeader.substring(7)
   const decoded = jwt.verify(token, JWT_SECRET)
-  const user = await User.findById(decoded.userId)
+  const user = await User.findById(decoded.userId).populate("company")
   if (!user) {
     throw new Error("User not found")
   }
@@ -28,15 +28,20 @@ export async function PUT(request, { params }) {
     await dbConnect()
     const user = await getAuthenticatedUser(request)
 
-    const { id } = params
+    const { id } = await params
     const updates = await request.json()
+    delete updates._id
+    delete updates.id
+    delete updates.company
+    delete updates.project
+    delete updates.createdBy
 
-    const oldTestCase = await TestCase.findOne({ id })
+    const oldTestCase = await TestCase.findOne({ id, company: user.company._id })
     if (!oldTestCase) {
       return NextResponse.json({ message: "Test case not found" }, { status: 404 })
     }
 
-    const testCase = await TestCase.findOneAndUpdate({ id }, updates, { new: true })
+    const testCase = await TestCase.findOneAndUpdate({ id, company: user.company._id }, updates, { new: true })
       .populate("createdBy", "name email role")
       .populate("assignee", "name email role")
 
@@ -50,6 +55,8 @@ export async function PUT(request, { params }) {
 
     await ActivityLog.create({
       user: user._id,
+      company: user.company._id,
+      project: testCase.project,
       action: "updated_test_case",
       entityType: "TestCase",
       entityId: testCase.id,
@@ -73,8 +80,8 @@ export async function DELETE(request, { params }) {
     await dbConnect()
     const user = await getAuthenticatedUser(request)
 
-    const { id } = params
-    const testCase = await TestCase.findOneAndDelete({ id })
+    const { id } = await params
+    const testCase = await TestCase.findOneAndDelete({ id, company: user.company._id })
 
     if (!testCase) {
       return NextResponse.json({ message: "Test case not found" }, { status: 404 })
@@ -83,6 +90,8 @@ export async function DELETE(request, { params }) {
     // Log the activity
     await ActivityLog.create({
       user: user._id,
+      company: user.company._id,
+      project: testCase.project,
       action: "deleted_test_case",
       entityType: "TestCase",
       entityId: testCase.id,

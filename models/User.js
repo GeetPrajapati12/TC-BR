@@ -24,6 +24,15 @@ const UserSchema = new mongoose.Schema(
       enum: ["Designer", "Developer", "Tester", "QA Lead", "Product Manager", "Admin"],
       default: "Tester",
     },
+    company: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Company",
+      required: true,
+    },
+    isCompanyAdmin: {
+      type: Boolean,
+      default: false,
+    },
     avatar: {
       type: String,
       default: "",
@@ -31,6 +40,26 @@ const UserSchema = new mongoose.Schema(
     isActive: {
       type: Boolean,
       default: true,
+    },
+    lastLogin: {
+      type: Date,
+    },
+    preferences: {
+      theme: {
+        type: String,
+        enum: ["light", "dark", "system"],
+        default: "system",
+      },
+      notifications: {
+        email: {
+          type: Boolean,
+          default: true,
+        },
+        browser: {
+          type: Boolean,
+          default: true,
+        },
+      },
     },
   },
   {

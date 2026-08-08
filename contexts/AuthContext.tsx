@@ -5,18 +5,35 @@ import { createContext, useContext, useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { useToast } from "@/hooks/use-toast"
 
+interface Company {
+  _id: string
+  name: string
+  slug: string
+}
+
 interface User {
   _id: string
   name: string
   email: string
   role: string
+  company: Company
   avatar?: string
+  isCompanyAdmin?: boolean
 }
 
 interface AuthContextType {
   user: User | null
-  login: (email: string, password: string) => Promise<boolean>
-  register: (name: string, email: string, password: string, role: string) => Promise<boolean>
+  login: (email: string, password: string, companyName: string) => Promise<boolean>
+  register: (
+    name: string,
+    email: string,
+    password: string,
+    role: string,
+    companyName: string,
+    isAdmin?: boolean,
+    companyDescription?: string,
+    industry?: string,
+  ) => Promise<boolean>
   logout: () => void
   loading: boolean
 }
@@ -52,29 +69,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(userData)
       } else {
         localStorage.removeItem("token")
+        localStorage.removeItem("companyName")
+        localStorage.removeItem("companyId")
       }
     } catch (error) {
       console.error("Auth check failed:", error)
       localStorage.removeItem("token")
+      localStorage.removeItem("companyName")
+      localStorage.removeItem("companyId")
     } finally {
       setLoading(false)
     }
   }
 
-  const login = async (email: string, password: string): Promise<boolean> => {
+  const login = async (email: string, password: string, companyName: string): Promise<boolean> => {
     try {
       const response = await fetch("/api/auth/login", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ email, password }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, companyName }),
       })
 
       const data = await response.json()
 
       if (response.ok) {
         localStorage.setItem("token", data.token)
+        localStorage.setItem("companyName", data.company.name)
+        localStorage.setItem("companyId", data.company._id)
         setUser(data.user)
         toast({
           title: "Login Successful! 🎉",
@@ -99,14 +120,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
-  const register = async (name: string, email: string, password: string, role: string): Promise<boolean> => {
+  const register = async (
+    name: string,
+    email: string,
+    password: string,
+    role: string,
+    companyName: string,
+    isAdmin?: boolean,
+    companyDescription?: string,
+    industry?: string,
+  ): Promise<boolean> => {
     try {
       const response = await fetch("/api/auth/register", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ name, email, password, role }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          email,
+          password,
+          role,
+          companyName,
+          isAdmin,
+          companyDescription,
+          industry,
+        }),
       })
 
       const data = await response.json()
@@ -139,14 +176,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       await fetch("/api/auth/logout", {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
       })
     } catch (error) {
       console.error("Logout error:", error)
     } finally {
       localStorage.removeItem("token")
+      localStorage.removeItem("companyName")
+      localStorage.removeItem("companyId")
       setUser(null)
       router.push("/login")
       toast({

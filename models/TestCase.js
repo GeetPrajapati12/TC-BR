@@ -5,7 +5,6 @@ const TestCaseSchema = new mongoose.Schema(
     id: {
       type: String,
       required: true,
-      unique: true,
     },
     scenario: {
       type: String,
@@ -41,6 +40,16 @@ const TestCaseSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    project: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Project",
+      required: true,
+    },
+    company: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Company",
+      required: true,
+    },
     assignee: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -59,5 +68,8 @@ const TestCaseSchema = new mongoose.Schema(
     timestamps: true,
   },
 )
+
+// Ensure unique test case ID within project
+TestCaseSchema.index({ id: 1, project: 1 }, { unique: true })
 
 export default mongoose.models.TestCase || mongoose.model("TestCase", TestCaseSchema)

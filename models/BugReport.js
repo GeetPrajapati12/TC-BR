@@ -5,7 +5,6 @@ const BugReportSchema = new mongoose.Schema(
     id: {
       type: String,
       required: true,
-      unique: true,
     },
     summary: {
       type: String,
@@ -46,6 +45,16 @@ const BugReportSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    project: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Project",
+      required: true,
+    },
+    company: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Company",
+      required: true,
+    },
     assignee: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -68,5 +77,8 @@ const BugReportSchema = new mongoose.Schema(
     timestamps: true,
   },
 )
+
+// Ensure unique bug report ID within project
+BugReportSchema.index({ id: 1, project: 1 }, { unique: true })
 
 export default mongoose.models.BugReport || mongoose.model("BugReport", BugReportSchema)

@@ -22,7 +22,10 @@ export interface BugReportGenerationResult {
 
 // Check if Google Gemini API key is available
 const isAIAvailable = () => {
-  return typeof process !== "undefined" && process.env?.GOOGLE_GENERATIVE_AI_API_KEY
+  const hasKey = typeof process !== "undefined" && process.env?.GOOGLE_GENERATIVE_AI_API_KEY
+  console.log("🔍 Debug - API Key available:", !!hasKey)
+  console.log("🔍 Debug - API Key length:", process.env?.GOOGLE_GENERATIVE_AI_API_KEY?.length || 0)
+  return hasKey
 }
 
 export async function generateTestCaseWithAI(summary: string): Promise<TestCaseGenerationResult> {

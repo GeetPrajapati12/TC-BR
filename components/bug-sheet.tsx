@@ -11,7 +11,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Trash2, Download, Search, Filter, Sparkles, RefreshCw, Edit, Eye, Save, X } from "lucide-react"
-import { generateBugReportWithAI } from "@/lib/ai-generator"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/contexts/AuthContext"
 import * as XLSX from "xlsx"
@@ -46,7 +45,7 @@ interface Bug {
   aiGenerated?: boolean
 }
 
-export function BugSheet() {
+export function BugSheet({ projectId }: { projectId?: string }) {
   const [bugs, setBugs] = useState<Bug[]>([])
   const [searchTerm, setSearchTerm] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>("all")
@@ -77,7 +76,22 @@ export function BugSheet() {
 
   useEffect(() => {
     fetchBugReports()
-  }, [])
+  }, [projectId])
+
+  const generateBugReportWithAI = async (summary: string) => {
+    const response = await fetch("/api/ai/generate-bug-report", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ summary }),
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || "Failed to generate bug report")
+    }
+
+    return response.json()
+  }
 
   const fetchBugReports = async () => {
     if (!user) return
@@ -85,7 +99,7 @@ export function BugSheet() {
     setLoading(true)
     try {
       const token = localStorage.getItem("token")
-      const response = await fetch("/api/bug-reports", {
+      const response = await fetch(`/api/bug-reports${projectId ? `?projectId=${projectId}` : ""}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -136,13 +150,13 @@ export function BugSheet() {
       }
 
       const token = localStorage.getItem("token")
-      const response = await fetch("/api/bug-reports", {
+      const response = await fetch(`/api/bug-reports${projectId ? `?projectId=${projectId}` : ""}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(newBugReport),
+        body: JSON.stringify({ ...newBugReport, projectId }),
       })
 
       if (response.ok) {
@@ -411,10 +425,17 @@ export function BugSheet() {
   }
 
   const saveManualBug = async () => {
-    if (!manualBug.summary?.trim()) {
+    if (
+      !manualBug.summary?.trim() ||
+      !manualBug.description?.trim() ||
+      !manualBug.steps?.trim() ||
+      !manualBug.expected?.trim() ||
+      !manualBug.actual?.trim() ||
+      !manualBug.environment?.trim()
+    ) {
       toast({
         title: "Validation Error",
-        description: "Bug summary is required",
+        description: "Summary, description, steps, expected, actual, and environment are required",
         variant: "destructive",
       })
       return
@@ -422,7 +443,7 @@ export function BugSheet() {
 
     try {
       const token = localStorage.getItem("token")
-      const response = await fetch("/api/bug-reports", {
+      const response = await fetch(`/api/bug-reports${projectId ? `?projectId=${projectId}` : ""}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -431,6 +452,7 @@ export function BugSheet() {
         body: JSON.stringify({
           ...manualBug,
           aiGenerated: false,
+          projectId,
         }),
       })
 

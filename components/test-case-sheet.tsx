@@ -11,7 +11,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Trash2, Download, Search, Filter, Sparkles, RefreshCw, Edit, Eye, Save, X } from "lucide-react"
-import { generateTestCaseWithAI } from "@/lib/ai-generator"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/contexts/AuthContext"
 import * as XLSX from "xlsx"
@@ -44,7 +43,7 @@ interface TestCase {
   aiGenerated?: boolean
 }
 
-export function TestCaseSheet() {
+export function TestCaseSheet({ projectId }: { projectId?: string }) {
   const [testCases, setTestCases] = useState<TestCase[]>([])
   const [searchTerm, setSearchTerm] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>("all")
@@ -73,7 +72,22 @@ export function TestCaseSheet() {
 
   useEffect(() => {
     fetchTestCases()
-  }, [])
+  }, [projectId])
+
+  const generateTestCaseWithAI = async (summary: string) => {
+    const response = await fetch("/api/ai/generate-test-case", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ summary }),
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || "Failed to generate test case")
+    }
+
+    return response.json()
+  }
 
   const fetchTestCases = async () => {
     if (!user) return
@@ -81,7 +95,7 @@ export function TestCaseSheet() {
     setLoading(true)
     try {
       const token = localStorage.getItem("token")
-      const response = await fetch("/api/test-cases", {
+      const response = await fetch(`/api/test-cases${projectId ? `?projectId=${projectId}` : ""}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -114,6 +128,10 @@ export function TestCaseSheet() {
 
     setIsGenerating(true)
     try {
+      // Debug before generation
+      console.log("🔍 About to generate test case...")
+      
+
       // Use AI to generate comprehensive test case (with fallback)
       const aiResult = await generateTestCaseWithAI(summary)
 
@@ -130,13 +148,13 @@ export function TestCaseSheet() {
       }
 
       const token = localStorage.getItem("token")
-      const response = await fetch("/api/test-cases", {
+      const response = await fetch(`/api/test-cases${projectId ? `?projectId=${projectId}` : ""}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(newTestCase),
+        body: JSON.stringify({ ...newTestCase, projectId }),
       })
 
       if (response.ok) {
@@ -382,10 +400,10 @@ export function TestCaseSheet() {
   }
 
   const saveManualTestCase = async () => {
-    if (!manualTestCase.scenario?.trim()) {
+    if (!manualTestCase.scenario?.trim() || !manualTestCase.steps?.trim() || !manualTestCase.expected?.trim()) {
       toast({
         title: "Validation Error",
-        description: "Test scenario is required",
+        description: "Scenario, steps, and expected result are required",
         variant: "destructive",
       })
       return
@@ -393,7 +411,7 @@ export function TestCaseSheet() {
 
     try {
       const token = localStorage.getItem("token")
-      const response = await fetch("/api/test-cases", {
+      const response = await fetch(`/api/test-cases${projectId ? `?projectId=${projectId}` : ""}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -402,6 +420,7 @@ export function TestCaseSheet() {
         body: JSON.stringify({
           ...manualTestCase,
           aiGenerated: false,
+          projectId,
         }),
       })
 

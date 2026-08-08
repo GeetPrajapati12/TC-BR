@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server"
 import jwt from "jsonwebtoken"
+import mongoose from "mongoose"
 import dbConnect from "@/lib/mongodb"
 import BugReport from "@/models/BugReport"
 import User from "@/models/User"
 import ActivityLog from "@/models/ActivityLog"
 
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
+const JWT_SECRET = process.env.JWT_SECRET
 
 async function getAuthenticatedUser(request) {
   const authHeader = request.headers.get("authorization")
@@ -15,7 +16,7 @@ async function getAuthenticatedUser(request) {
 
   const token = authHeader.substring(7)
   const decoded = jwt.verify(token, JWT_SECRET)
-  const user = await User.findById(decoded.userId)
+  const user = await User.findById(decoded.userId).populate("company")
   if (!user) {
     throw new Error("User not found")
   }
@@ -23,20 +24,34 @@ async function getAuthenticatedUser(request) {
   return user
 }
 
+function bugLookup(id, companyId) {
+  const lookup = [{ id }]
+  if (mongoose.Types.ObjectId.isValid(id)) {
+    lookup.push({ _id: id })
+  }
+  return { company: companyId, $or: lookup }
+}
+
 export async function PUT(request, { params }) {
   try {
     await dbConnect()
     const user = await getAuthenticatedUser(request)
 
-    const { id } = params
+    const { id } = await params
     const updates = await request.json()
+    delete updates._id
+    delete updates.id
+    delete updates.company
+    delete updates.project
+    delete updates.reporter
 
-    const oldBugReport = await BugReport.findOne({ _id: id })
+    const query = bugLookup(id, user.company._id)
+    const oldBugReport = await BugReport.findOne(query)
     if (!oldBugReport) {
       return NextResponse.json({ message: "Bug report not found" }, { status: 404 })
     }
 
-    const bugReport = await BugReport.findOneAndUpdate({ _id: id }, updates, { new: true })
+    const bugReport = await BugReport.findOneAndUpdate(query, updates, { new: true })
       .populate("reporter", "name email role")
       .populate("assignee", "name email role")
 
@@ -50,6 +65,8 @@ export async function PUT(request, { params }) {
 
     await ActivityLog.create({
       user: user._id,
+      company: user.company._id,
+      project: bugReport.project,
       action: "updated_bug_report",
       entityType: "BugReport",
       entityId: bugReport._id,
@@ -73,8 +90,8 @@ export async function DELETE(request, { params }) {
     await dbConnect()
     const user = await getAuthenticatedUser(request)
 
-    const { id } = params
-    const bugReport = await BugReport.findOneAndDelete({ _id: id })
+    const { id } = await params
+    const bugReport = await BugReport.findOneAndDelete(bugLookup(id, user.company._id))
 
     if (!bugReport) {
       return NextResponse.json({ message: "Bug report not found" }, { status: 404 })
@@ -83,6 +100,8 @@ export async function DELETE(request, { params }) {
     // Log the activity
     await ActivityLog.create({
       user: user._id,
+      company: user.company._id,
+      project: bugReport.project,
       action: "deleted_bug_report",
       entityType: "BugReport",
       entityId: bugReport._id,
