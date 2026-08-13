@@ -1,18 +1,15 @@
-import { NextResponse } from "next/server"
 import { generateBugReportWithAI } from "@/lib/ai-generator"
+import { ok, badRequest, serverError } from "@/lib/api-response"
 
 export async function POST(request) {
   try {
     const { summary } = await request.json()
-
-    if (!summary || !String(summary).trim()) {
-      return NextResponse.json({ message: "Summary is required" }, { status: 400 })
-    }
+    if (!summary?.trim()) return badRequest("Summary is required")
 
     const result = await generateBugReportWithAI(String(summary).trim())
-    return NextResponse.json(result)
+    return ok(result)
   } catch (error) {
-    console.error("Bug report AI generation error:", error)
-    return NextResponse.json({ message: "Failed to generate bug report" }, { status: 500 })
+    console.error("[AI/generate-bug-report]", error)
+    return serverError("Failed to generate bug report")
   }
 }

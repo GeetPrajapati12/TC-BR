@@ -1,80 +1,68 @@
-import { NextResponse } from "next/server"
 import mongoose from "mongoose"
 import dbConnect from "@/lib/mongodb"
 import User from "@/models/User"
 import Company from "@/models/Company"
 import ActivityLog from "@/models/ActivityLog"
-
-function slugify(name) {
-  return name
-    .toLowerCase()
-    .replace(/[^a-zA-Z0-9]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-}
+import { slugify } from "@/lib/auth"
+import { ok, badRequest, conflict, serverError } from "@/lib/api-response"
 
 export async function POST(request) {
   try {
     await dbConnect()
 
-    const { name, email, password, role, companyName, isAdmin, companyDescription, industry } = await request.json()
+    const body = await request.json()
+    const { name, email, password, role, companyName, isAdmin, companyDescription, industry } = body
 
-    if (!companyName || !companyName.trim()) {
-      return NextResponse.json({ message: "Please enter your company name" }, { status: 400 })
+    if (!name?.trim() || !email?.trim() || !password || !role || !companyName?.trim()) {
+      return badRequest("Name, email, password, role, and company name are required")
     }
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ email })
+    if (password.length < 6) {
+      return badRequest("Password must be at least 6 characters")
+    }
+
+    const existingUser = await User.findOne({ email: email.toLowerCase().trim() })
     if (existingUser) {
-      return NextResponse.json({ message: "User already exists with this email" }, { status: 400 })
+      return conflict("An account with this email already exists")
     }
 
-    const companySlug = slugify(companyName)
+    const companySlug = slugify(companyName.trim())
     const existingCompany = await Company.findOne({ slug: companySlug })
-
-    // Admin flow: must create a NEW company; if exists -> error
     const isUserAdmin = role === "Admin" || isAdmin === true
 
     if (isUserAdmin) {
       if (existingCompany) {
-        return NextResponse.json(
-          { message: "Enter your company name. This company is already registered." },
-          { status: 400 },
-        )
+        return conflict("A company with this name already exists. Choose a different name or sign in as a member.")
       }
 
-      // Create company with temporary adminUser ObjectId
-      const tempAdminId = new mongoose.Types.ObjectId()
+      const tempId = new mongoose.Types.ObjectId()
       const company = await Company.create({
         name: companyName.trim(),
         slug: companySlug,
-        description: companyDescription || "",
-        industry: industry || "Technology",
-        adminUser: tempAdminId,
+        description: companyDescription?.trim() ?? "",
+        industry: industry ?? "Technology",
+        adminUser: tempId,
       })
 
-      // Create user as company admin
       const user = await User.create({
-        name,
-        email,
+        name: name.trim(),
+        email: email.toLowerCase().trim(),
         password,
         role: "Admin",
         company: company._id,
         isCompanyAdmin: true,
       })
 
-      // Link company adminUser to the created user
       company.adminUser = user._id
       await company.save()
 
-      // Log activities
       await ActivityLog.create({
         user: user._id,
         company: company._id,
         action: "company_created",
         entityType: "Company",
         entityId: company._id.toString(),
-        description: `${name} created company "${company.name}"`,
+        description: `${user.name} created company "${company.name}"`,
         details: { companyName: company.name, industry: company.industry },
       })
 
@@ -84,22 +72,21 @@ export async function POST(request) {
         action: "user_registered",
         entityType: "User",
         entityId: user._id.toString(),
-        description: `${name} registered as Admin`,
-        details: { role: "Admin", email },
+        description: `${user.name} registered as Admin`,
+        details: { role: "Admin", email: user.email },
       })
 
-      const { password: _, ...userWithoutPassword } = user.toObject()
-      return NextResponse.json({ message: "User created successfully", user: userWithoutPassword }, { status: 201 })
+      return ok({ message: "Account created successfully. Please sign in." }, 201)
     }
 
-    // Employee flow: company must EXIST; if not -> error
+    // Non-admin: company must exist
     if (!existingCompany) {
-      return NextResponse.json({ message: "Enter your company name. Company not found." }, { status: 400 })
+      return badRequest("Company not found. Check the company name or ask your admin to register it.")
     }
 
     const user = await User.create({
-      name,
-      email,
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
       password,
       role,
       company: existingCompany._id,
@@ -112,14 +99,14 @@ export async function POST(request) {
       action: "user_registered",
       entityType: "User",
       entityId: user._id.toString(),
-      description: `${name} registered as ${role}`,
-      details: { role, email, company: existingCompany.name },
+      description: `${user.name} registered as ${role}`,
+      details: { role, email: user.email, company: existingCompany.name },
     })
 
-    const { password: _, ...userWithoutPassword } = user.toObject()
-    return NextResponse.json({ message: "User created successfully", user: userWithoutPassword }, { status: 201 })
+    return ok({ message: "Account created successfully. Please sign in." }, 201)
   } catch (error) {
-    console.error("Registration error:", error)
-    return NextResponse.json({ message: "Internal server error" }, { status: 500 })
+    if (error.code === 11000) return conflict("An account with this email already exists")
+    console.error("[Register]", error)
+    return serverError()
   }
 }

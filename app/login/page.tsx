@@ -8,116 +8,125 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Eye, EyeOff, TestTube, LogIn, Building } from "lucide-react"
+import { Eye, EyeOff, LogIn, Building2, TestTube2 } from "lucide-react"
 import { useAuth } from "@/contexts/AuthContext"
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("")
-  const [password, setPassword] = useState("")
-  const [companyName, setCompanyName] = useState("")
+  const [formData, setFormData] = useState({ email: "", password: "", companyName: "" })
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const { login } = useAuth()
   const router = useRouter()
 
+  const update = (field: string, value: string) =>
+    setFormData((prev) => ({ ...prev, [field]: value }))
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!companyName.trim()) {
-      alert("Please enter your company name")
-      return
-    }
+    if (!formData.companyName.trim()) return
     setLoading(true)
-    const success = await login(email, password, companyName)
+    const success = await login(formData.email, formData.password, formData.companyName)
     if (success) router.push("/projects")
     setLoading(false)
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="text-center">
-          <div className="flex justify-center mb-4">
-            <div className="p-3 bg-blue-100 rounded-full">
-              <TestTube className="w-8 h-8 text-blue-600" />
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-indigo-50 p-4">
+      <div className="w-full max-w-md animate-fade-in">
+        {/* Logo */}
+        <div className="flex justify-center mb-8">
+          <div className="flex items-center gap-2">
+            <div className="p-2 bg-blue-600 rounded-xl">
+              <TestTube2 className="w-6 h-6 text-white" />
             </div>
+            <span className="text-2xl font-bold text-gray-900">QA Tool</span>
           </div>
-          <CardTitle className="text-2xl font-bold">Welcome Back</CardTitle>
-          <CardDescription>Sign in to your QA Tool account</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="companyName">Company Name</Label>
-              <div className="relative">
-                <Building className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+        </div>
+
+        <Card className="border-0 shadow-xl shadow-gray-200/60">
+          <CardHeader className="pb-4">
+            <CardTitle className="text-xl font-semibold text-center">Welcome back</CardTitle>
+            <CardDescription className="text-center">Sign in to your workspace</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="companyName">Company Name</Label>
+                <div className="relative">
+                  <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    id="companyName"
+                    placeholder="Your company name"
+                    value={formData.companyName}
+                    onChange={(e) => update("companyName", e.target.value)}
+                    className="pl-9"
+                    required
+                    autoComplete="organization"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="email">Email</Label>
                 <Input
-                  id="companyName"
-                  type="text"
-                  placeholder="Enter your company name"
-                  value={companyName}
-                  onChange={(e) => setCompanyName(e.target.value)}
-                  className="pl-10"
+                  id="email"
+                  type="email"
+                  placeholder="you@company.com"
+                  value={formData.email}
+                  onChange={(e) => update("email", e.target.value)}
                   required
+                  autoComplete="email"
                 />
               </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="Enter your email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <div className="relative">
-                <Input
-                  id="password"
-                  type={showPassword ? "text" : "password"}
-                  placeholder="Enter your password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
-                  onClick={() => setShowPassword(!showPassword)}
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </Button>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="password">Password</Label>
+                <div className="relative">
+                  <Input
+                    id="password"
+                    type={showPassword ? "text" : "password"}
+                    placeholder="••••••••"
+                    value={formData.password}
+                    onChange={(e) => update("password", e.target.value)}
+                    required
+                    autoComplete="current-password"
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                    tabIndex={-1}
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
-            </div>
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-                  Signing In...
-                </>
-              ) : (
-                <>
-                  <LogIn className="w-4 h-4 mr-2" />
-                  Sign In
-                </>
-              )}
-            </Button>
-          </form>
-          <div className="mt-6 text-center">
-            <p className="text-sm text-muted-foreground">
-              Don't have an account?{" "}
-              <Link href="/signup" className="text-blue-600 hover:underline font-medium">
-                Sign up
+
+              <Button type="submit" className="w-full mt-2" disabled={loading}>
+                {loading ? (
+                  <span className="flex items-center gap-2">
+                    <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Signing in…
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-2">
+                    <LogIn className="w-4 h-4" />
+                    Sign In
+                  </span>
+                )}
+              </Button>
+            </form>
+
+            <p className="text-center text-sm text-muted-foreground mt-6">
+              Don&apos;t have an account?{" "}
+              <Link href="/signup" className="text-blue-600 hover:text-blue-700 font-medium hover:underline">
+                Create one
               </Link>
             </p>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }

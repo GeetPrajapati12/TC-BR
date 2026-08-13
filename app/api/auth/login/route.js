@@ -1,55 +1,48 @@
-import { NextResponse } from "next/server"
-import jwt from "jsonwebtoken"
 import dbConnect from "@/lib/mongodb"
 import User from "@/models/User"
 import Company from "@/models/Company"
 import ActivityLog from "@/models/ActivityLog"
-
-const JWT_SECRET = process.env.JWT_SECRET
-
-function slugify(name) {
-  return name
-    .toLowerCase()
-    .replace(/[^a-zA-Z0-9]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-}
+import { signToken, slugify } from "@/lib/auth"
+import { ok, badRequest, unauthorized, serverError } from "@/lib/api-response"
 
 export async function POST(request) {
   try {
     await dbConnect()
 
-    const { email, password, companyName } = await request.json()
+    const body = await request.json()
+    const { email, password, companyName } = body
 
-    if (!companyName || !companyName.trim()) {
-      return NextResponse.json({ message: "Please enter your company name" }, { status: 400 })
+    if (!email?.trim() || !password || !companyName?.trim()) {
+      return badRequest("Email, password, and company name are required")
     }
 
-    const company = await Company.findOne({ slug: slugify(companyName) })
+    const company = await Company.findOne({ slug: slugify(companyName.trim()) })
     if (!company) {
-      return NextResponse.json({ message: "Company not found. Please enter your company name." }, { status: 400 })
+      return badRequest("Company not found. Check the company name and try again.")
     }
 
-    // Find user and ensure they belong to this company
-    const user = await User.findOne({ email }).populate("company", "name slug")
+    const user = await User.findOne({ email: email.toLowerCase().trim() }).populate("company", "name slug")
     if (!user) {
-      return NextResponse.json({ message: "Invalid credentials" }, { status: 401 })
+      return unauthorized("Invalid email or password")
     }
 
-    if (!user.company || String(user.company._id) !== String(company._id)) {
-      return NextResponse.json({ message: "User does not belong to this company" }, { status: 403 })
+    if (String(user.company._id) !== String(company._id)) {
+      return unauthorized("This account does not belong to the specified company")
+    }
+
+    if (!user.isActive) {
+      return unauthorized("Your account has been deactivated. Contact your admin.")
     }
 
     const isPasswordValid = await user.comparePassword(password)
     if (!isPasswordValid) {
-      return NextResponse.json({ message: "Invalid credentials" }, { status: 401 })
+      return unauthorized("Invalid email or password")
     }
 
-    const token = jwt.sign(
-      { userId: user._id, email: user.email, companyId: company._id, companyName: company.name },
-      JWT_SECRET,
-      { expiresIn: "7d" },
-    )
+    // Update last login
+    await User.findByIdAndUpdate(user._id, { lastLogin: new Date() })
+
+    const token = signToken(user._id, user.email, company._id, company.name)
 
     await ActivityLog.create({
       user: user._id,
@@ -57,18 +50,17 @@ export async function POST(request) {
       action: "user_login",
       entityType: "User",
       entityId: user._id.toString(),
-      description: `${user.name} logged in`,
-      details: { email, role: user.role, company: company.name },
+      description: `${user.name} signed in`,
+      details: { role: user.role },
     })
 
-    const { password: _, ...userWithoutPassword } = user.toObject()
-    return NextResponse.json({
+    return ok({
       token,
-      user: userWithoutPassword,
+      user: user.toJSON(),
       company: { _id: company._id, name: company.name, slug: company.slug },
     })
   } catch (error) {
-    console.error("Login error:", error)
-    return NextResponse.json({ message: "Internal server error" }, { status: 500 })
+    console.error("[Login]", error)
+    return serverError()
   }
 }

@@ -18,6 +18,7 @@ const CompanySchema = new mongoose.Schema(
     description: {
       type: String,
       maxlength: [500, "Description cannot be more than 500 characters"],
+      default: "",
     },
     industry: {
       type: String,
@@ -34,34 +35,12 @@ const CompanySchema = new mongoose.Schema(
       default: true,
     },
     settings: {
-      allowEmployeeRegistration: {
-        type: Boolean,
-        default: true,
-      },
-      maxProjects: {
-        type: Number,
-        default: 50,
-      },
-      maxUsers: {
-        type: Number,
-        default: 100,
-      },
+      allowEmployeeRegistration: { type: Boolean, default: true },
+      maxProjects: { type: Number, default: 50 },
+      maxUsers: { type: Number, default: 100 },
     },
   },
-  {
-    timestamps: true,
-  },
+  { timestamps: true }
 )
-
-CompanySchema.pre("save", function (next) {
-  if (this.isModified("name")) {
-    this.slug = this.name
-      .toLowerCase()
-      .replace(/[^a-zA-Z0-9]/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "")
-  }
-  next()
-})
 
 export default mongoose.models.Company || mongoose.model("Company", CompanySchema)

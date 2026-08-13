@@ -1,18 +1,23 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
-import { Trash2, Download, Search, Filter, Sparkles, RefreshCw, Edit, Eye, Save, X } from "lucide-react"
+import { StatCard } from "@/components/ui/stat-card"
+import { EmptyState } from "@/components/ui/empty-state"
+import {
+  Trash2, Download, Search, Filter, Sparkles,
+  RefreshCw, Edit, Eye, Save, X, Plus, TestTube,
+} from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/contexts/AuthContext"
+import { formatDate } from "@/lib/utils"
 import * as XLSX from "xlsx"
 
 interface TestCase {
@@ -26,303 +31,191 @@ interface TestCase {
   remarks: string
   priority: "Low" | "Medium" | "High" | "Critical"
   category: string
-  assignee?: {
-    _id: string
-    name: string
-    email: string
-    role: string
-  }
-  createdBy: {
-    _id: string
-    name: string
-    email: string
-    role: string
-  }
+  assignee?: { _id: string; name: string; email: string; role: string }
+  createdBy: { _id: string; name: string; email: string; role: string }
   createdAt: string
   updatedAt: string
   aiGenerated?: boolean
 }
 
+const STATUS_COLORS: Record<string, string> = {
+  Passed: "bg-emerald-100 text-emerald-700",
+  Failed: "bg-red-100 text-red-700",
+  "In Progress": "bg-blue-100 text-blue-700",
+  Blocked: "bg-amber-100 text-amber-700",
+  "Not Started": "bg-gray-100 text-gray-600",
+}
+
+const PRIORITY_COLORS: Record<string, string> = {
+  Critical: "bg-red-100 text-red-700",
+  High: "bg-orange-100 text-orange-700",
+  Medium: "bg-yellow-100 text-yellow-700",
+  Low: "bg-green-100 text-green-700",
+}
+
+const CATEGORIES = [
+  "Functional", "UI/UX", "Performance", "Security",
+  "Integration", "API", "Database", "Mobile", "Web", "Other",
+]
+
+const BLANK_TC = {
+  scenario: "", steps: "", expected: "", actual: "",
+  status: "Not Started" as const, remarks: "", priority: "Medium" as const, category: "Functional",
+}
+
+function token() { return localStorage.getItem("token") }
+
 export function TestCaseSheet({ projectId }: { projectId?: string }) {
   const [testCases, setTestCases] = useState<TestCase[]>([])
-  const [searchTerm, setSearchTerm] = useState("")
-  const [statusFilter, setStatusFilter] = useState<string>("all")
-  const [priorityFilter, setPriorityFilter] = useState<string>("all")
-  const [summary, setSummary] = useState("")
-  const [isGenerating, setIsGenerating] = useState(false)
   const [loading, setLoading] = useState(true)
-  const [editingTestCase, setEditingTestCase] = useState<TestCase | null>(null)
-  const [viewingTestCase, setViewingTestCase] = useState<TestCase | null>(null)
-  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
-  const [isViewDialogOpen, setIsViewDialogOpen] = useState(false)
+  const [generating, setGenerating] = useState(false)
+  const [aiSummary, setAiSummary] = useState("")
+  const [searchTerm, setSearchTerm] = useState("")
+  const [statusFilter, setStatusFilter] = useState("all")
+  const [priorityFilter, setPriorityFilter] = useState("all")
+
+  // Dialogs
+  const [viewTC, setViewTC] = useState<TestCase | null>(null)
+  const [editTC, setEditTC] = useState<TestCase | null>(null)
+  const [manualOpen, setManualOpen] = useState(false)
+  const [manualTC, setManualTC] = useState<typeof BLANK_TC>({ ...BLANK_TC })
+
   const { toast } = useToast()
   const { user } = useAuth()
 
-  const [isManualDialogOpen, setIsManualDialogOpen] = useState(false)
-  const [manualTestCase, setManualTestCase] = useState<Partial<TestCase>>({
-    scenario: "",
-    steps: "",
-    expected: "",
-    actual: "",
-    status: "Not Started",
-    remarks: "",
-    priority: "Medium",
-    category: "Functional",
-  })
-
-  useEffect(() => {
-    fetchTestCases()
-  }, [projectId])
-
-  const generateTestCaseWithAI = async (summary: string) => {
-    const response = await fetch("/api/ai/generate-test-case", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ summary }),
-    })
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.message || "Failed to generate test case")
-    }
-
-    return response.json()
-  }
-
-  const fetchTestCases = async () => {
+  const fetchTestCases = useCallback(async () => {
     if (!user) return
-
     setLoading(true)
     try {
-      const token = localStorage.getItem("token")
-      const response = await fetch(`/api/test-cases${projectId ? `?projectId=${projectId}` : ""}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-        setTestCases(data)
-      } else {
-        toast({
-          title: "Error",
-          description: "Failed to fetch test cases",
-          variant: "destructive",
-        })
-      }
-    } catch (error) {
-      console.error("Failed to fetch test cases:", error)
-      toast({
-        title: "Error",
-        description: "Failed to fetch test cases",
-        variant: "destructive",
-      })
+      const url = `/api/test-cases${projectId ? `?projectId=${projectId}` : ""}`
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token()}` } })
+      if (res.ok) setTestCases(await res.json())
+      else toast({ title: "Error", description: "Failed to load test cases", variant: "destructive" })
+    } catch {
+      toast({ title: "Error", description: "Failed to load test cases", variant: "destructive" })
     } finally {
       setLoading(false)
     }
-  }
+  }, [user, projectId, toast])
 
-  const generateTestCaseFromSummary = async (summary: string) => {
-    if (!summary.trim()) return
+  useEffect(() => { fetchTestCases() }, [fetchTestCases])
 
-    setIsGenerating(true)
+  // ── AI Generation ────────────────────────────────────────────────────────
+  const generateWithAI = async () => {
+    if (!aiSummary.trim()) return
+    setGenerating(true)
     try {
-      // Debug before generation
-      console.log("🔍 About to generate test case...")
-      
-
-      // Use AI to generate comprehensive test case (with fallback)
-      const aiResult = await generateTestCaseWithAI(summary)
-
-      const newTestCase = {
-        scenario: aiResult.scenario,
-        steps: aiResult.steps,
-        expected: aiResult.expected,
-        actual: "",
-        status: "Not Started" as const,
-        remarks: "",
-        priority: aiResult.priority,
-        category: aiResult.category,
-        aiGenerated: true,
-      }
-
-      const token = localStorage.getItem("token")
-      const response = await fetch(`/api/test-cases${projectId ? `?projectId=${projectId}` : ""}`, {
+      const aiRes = await fetch("/api/ai/generate-test-case", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ ...newTestCase, projectId }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ summary: aiSummary }),
       })
+      if (!aiRes.ok) throw new Error("AI generation failed")
+      const aiData = await aiRes.json()
 
-      if (response.ok) {
-        const createdTestCase = await response.json()
-        setTestCases([createdTestCase, ...testCases])
-        setSummary("")
-
-        toast({
-          title: "Test Case Generated! ✨",
-          description: `Comprehensive test case created for "${summary}"`,
-        })
-      } else {
-        throw new Error("Failed to create test case")
-      }
-    } catch (error) {
-      console.error("Generation error:", error)
-      toast({
-        title: "Generation Failed",
-        description: "Failed to generate test case. Please try again.",
-        variant: "destructive",
+      const res = await fetch(`/api/test-cases${projectId ? `?projectId=${projectId}` : ""}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
+        body: JSON.stringify({ ...aiData, actual: "", remarks: "", status: "Not Started", aiGenerated: true, projectId }),
       })
+      if (!res.ok) throw new Error("Failed to save")
+      const created = await res.json()
+      setTestCases((prev) => [created, ...prev])
+      setAiSummary("")
+      toast({ title: "Test case generated ✨", description: `"${created.scenario.slice(0, 60)}…"` })
+    } catch {
+      toast({ title: "Generation failed", description: "Please try again", variant: "destructive" })
     } finally {
-      setIsGenerating(false)
+      setGenerating(false)
     }
   }
 
-  const regenerateTestCase = async (testCase: TestCase) => {
-    setIsGenerating(true)
+  const regenerateTC = async (tc: TestCase) => {
+    setGenerating(true)
     try {
-      const aiResult = await generateTestCaseWithAI(testCase.scenario)
+      const aiRes = await fetch("/api/ai/generate-test-case", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ summary: tc.scenario }),
+      })
+      if (!aiRes.ok) throw new Error()
+      const aiData = await aiRes.json()
 
-      const updates = {
-        steps: aiResult.steps,
-        expected: aiResult.expected,
-        priority: aiResult.priority,
-        category: aiResult.category,
-        aiGenerated: true,
-      }
-
-      const token = localStorage.getItem("token")
-      const response = await fetch(`/api/test-cases/${testCase.id}`, {
+      const res = await fetch(`/api/test-cases/${tc.id}`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(updates),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
+        body: JSON.stringify({ steps: aiData.steps, expected: aiData.expected, priority: aiData.priority, category: aiData.category, aiGenerated: true }),
       })
-
-      if (response.ok) {
-        const updatedTestCase = await response.json()
-        setTestCases(testCases.map((tc) => (tc.id === testCase.id ? updatedTestCase : tc)))
-
-        toast({
-          title: "Test Case Regenerated! ✨",
-          description: "AI has updated the test case with fresh content",
-        })
-      } else {
-        throw new Error("Failed to regenerate test case")
-      }
-    } catch (error) {
-      toast({
-        title: "Regeneration Failed",
-        description: "Failed to regenerate test case. Please try again.",
-        variant: "destructive",
-      })
+      if (!res.ok) throw new Error()
+      const updated = await res.json()
+      setTestCases((prev) => prev.map((t) => (t.id === tc.id ? updated : t)))
+      toast({ title: "Regenerated ✨" })
+    } catch {
+      toast({ title: "Regeneration failed", variant: "destructive" })
     } finally {
-      setIsGenerating(false)
+      setGenerating(false)
     }
   }
 
-  const openEditDialog = (testCase: TestCase) => {
-    setEditingTestCase({ ...testCase })
-    setIsEditDialogOpen(true)
-  }
-
-  const openViewDialog = (testCase: TestCase) => {
-    setViewingTestCase(testCase)
-    setIsViewDialogOpen(true)
-  }
-
-  const saveEditedTestCase = async () => {
-    if (!editingTestCase) return
-
+  // ── CRUD ─────────────────────────────────────────────────────────────────
+  const saveManual = async () => {
+    if (!manualTC.scenario.trim() || !manualTC.steps.trim() || !manualTC.expected.trim()) {
+      toast({ title: "Validation error", description: "Scenario, steps and expected result are required", variant: "destructive" })
+      return
+    }
     try {
-      const token = localStorage.getItem("token")
-      const response = await fetch(`/api/test-cases/${editingTestCase.id}`, {
+      const res = await fetch(`/api/test-cases${projectId ? `?projectId=${projectId}` : ""}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
+        body: JSON.stringify({ ...manualTC, aiGenerated: false, projectId }),
+      })
+      if (!res.ok) throw new Error()
+      const created = await res.json()
+      setTestCases((prev) => [created, ...prev])
+      setManualOpen(false)
+      setManualTC({ ...BLANK_TC })
+      toast({ title: "Test case created ✅" })
+    } catch {
+      toast({ title: "Failed to create", variant: "destructive" })
+    }
+  }
+
+  const saveEdit = async () => {
+    if (!editTC) return
+    try {
+      const res = await fetch(`/api/test-cases/${editTC.id}`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(editingTestCase),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
+        body: JSON.stringify(editTC),
       })
-
-      if (response.ok) {
-        const updatedTestCase = await response.json()
-        setTestCases(testCases.map((tc) => (tc.id === editingTestCase.id ? updatedTestCase : tc)))
-        setIsEditDialogOpen(false)
-        setEditingTestCase(null)
-
-        toast({
-          title: "Test Case Updated! ✅",
-          description: "Your changes have been saved successfully",
-        })
-      } else {
-        throw new Error("Failed to update test case")
-      }
-    } catch (error) {
-      toast({
-        title: "Update Failed",
-        description: "Failed to update test case. Please try again.",
-        variant: "destructive",
-      })
+      if (!res.ok) throw new Error()
+      const updated = await res.json()
+      setTestCases((prev) => prev.map((t) => (t.id === editTC.id ? updated : t)))
+      setEditTC(null)
+      toast({ title: "Test case updated ✅" })
+    } catch {
+      toast({ title: "Failed to update", variant: "destructive" })
     }
   }
 
-  const updateTestCase = async (id: string, field: keyof TestCase, value: string) => {
+  const deleteTC = async (id: string) => {
+    if (!confirm("Delete this test case?")) return
     try {
-      const token = localStorage.getItem("token")
-      const response = await fetch(`/api/test-cases/${id}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ [field]: value }),
-      })
-
-      if (response.ok) {
-        const updatedTestCase = await response.json()
-        setTestCases(testCases.map((tc) => (tc.id === id ? updatedTestCase : tc)))
-      }
-    } catch (error) {
-      console.error("Failed to update test case:", error)
-    }
-  }
-
-  const deleteTestCase = async (id: string) => {
-    try {
-      const token = localStorage.getItem("token")
-      const response = await fetch(`/api/test-cases/${id}`, {
+      const res = await fetch(`/api/test-cases/${id}`, {
         method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { Authorization: `Bearer ${token()}` },
       })
-
-      if (response.ok) {
-        setTestCases(testCases.filter((tc) => tc.id !== id))
-        toast({
-          title: "Test Case Deleted",
-          description: "Test case has been removed successfully",
-        })
-      } else {
-        throw new Error("Failed to delete test case")
-      }
-    } catch (error) {
-      toast({
-        title: "Delete Failed",
-        description: "Failed to delete test case. Please try again.",
-        variant: "destructive",
-      })
+      if (!res.ok) throw new Error()
+      setTestCases((prev) => prev.filter((t) => t.id !== id))
+      toast({ title: "Test case deleted" })
+    } catch {
+      toast({ title: "Failed to delete", variant: "destructive" })
     }
   }
 
-  const exportToExcel = () => {
-    const exportData = filteredTestCases.map((tc) => ({
+  // ── Export ────────────────────────────────────────────────────────────────
+  const exportExcel = () => {
+    const data = filtered.map((tc) => ({
       ID: tc.id,
       Scenario: tc.scenario,
       Steps: tc.steps,
@@ -331,405 +224,194 @@ export function TestCaseSheet({ projectId }: { projectId?: string }) {
       Status: tc.status,
       Priority: tc.priority,
       Category: tc.category,
-      Assignee: tc.assignee?.name || "",
+      Assignee: tc.assignee?.name ?? "",
       "Created By": tc.createdBy.name,
-      "Created At": new Date(tc.createdAt).toLocaleDateString(),
+      "Created At": formatDate(tc.createdAt),
       Remarks: tc.remarks,
     }))
-
-    const worksheet = XLSX.utils.json_to_sheet(exportData)
-    const workbook = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(workbook, worksheet, "TestCases")
-    XLSX.writeFile(workbook, `TestCases_${new Date().toISOString().split("T")[0]}.xlsx`)
+    const ws = XLSX.utils.json_to_sheet(data)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, "Test Cases")
+    XLSX.writeFile(wb, `TestCases_${new Date().toISOString().split("T")[0]}.xlsx`)
   }
 
-  const getStatusColor = (status: TestCase["status"]) => {
-    switch (status) {
-      case "Passed":
-        return "bg-green-100 text-green-800"
-      case "Failed":
-        return "bg-red-100 text-red-800"
-      case "In Progress":
-        return "bg-blue-100 text-blue-800"
-      case "Blocked":
-        return "bg-yellow-100 text-yellow-800"
-      default:
-        return "bg-gray-100 text-gray-800"
-    }
-  }
-
-  const getPriorityColor = (priority: TestCase["priority"]) => {
-    switch (priority) {
-      case "Critical":
-        return "bg-red-100 text-red-800"
-      case "High":
-        return "bg-orange-100 text-orange-800"
-      case "Medium":
-        return "bg-yellow-100 text-yellow-800"
-      case "Low":
-        return "bg-green-100 text-green-800"
-      default:
-        return "bg-gray-100 text-gray-800"
-    }
-  }
-
-  const filteredTestCases = testCases.filter((tc) => {
-    const matchesSearch =
-      tc.scenario.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      tc.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      tc.assignee?.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      tc.createdBy.name.toLowerCase().includes(searchTerm.toLowerCase())
-    const matchesStatus = statusFilter === "all" || tc.status === statusFilter
-    const matchesPriority = priorityFilter === "all" || tc.priority === priorityFilter
-
-    return matchesSearch && matchesStatus && matchesPriority
+  // ── Filtering ─────────────────────────────────────────────────────────────
+  const filtered = testCases.filter((tc) => {
+    const q = searchTerm.toLowerCase()
+    const matchSearch = !q || tc.scenario.toLowerCase().includes(q) || tc.category.toLowerCase().includes(q)
+    const matchStatus = statusFilter === "all" || tc.status === statusFilter
+    const matchPriority = priorityFilter === "all" || tc.priority === priorityFilter
+    return matchSearch && matchStatus && matchPriority
   })
 
-  const openManualDialog = () => {
-    setManualTestCase({
-      scenario: "",
-      steps: "",
-      expected: "",
-      actual: "",
-      status: "Not Started",
-      remarks: "",
-      priority: "Medium",
-      category: "Functional",
-    })
-    setIsManualDialogOpen(true)
-  }
-
-  const saveManualTestCase = async () => {
-    if (!manualTestCase.scenario?.trim() || !manualTestCase.steps?.trim() || !manualTestCase.expected?.trim()) {
-      toast({
-        title: "Validation Error",
-        description: "Scenario, steps, and expected result are required",
-        variant: "destructive",
-      })
-      return
-    }
-
-    try {
-      const token = localStorage.getItem("token")
-      const response = await fetch(`/api/test-cases${projectId ? `?projectId=${projectId}` : ""}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          ...manualTestCase,
-          aiGenerated: false,
-          projectId,
-        }),
-      })
-
-      if (response.ok) {
-        const newTestCase = await response.json()
-        setTestCases([newTestCase, ...testCases])
-        setIsManualDialogOpen(false)
-
-        toast({
-          title: "Test Case Created! ✅",
-          description: "Manual test case has been added successfully",
-        })
-      } else {
-        throw new Error("Failed to create test case")
-      }
-    } catch (error) {
-      toast({
-        title: "Creation Failed",
-        description: "Failed to create test case. Please try again.",
-        variant: "destructive",
-      })
-    }
-  }
-
-  if (loading) {
-    return (
-      <div className="text-center py-8">
-        <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-4" />
-        <p className="text-muted-foreground">Loading test cases...</p>
-      </div>
-    )
-  }
-
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-6">
-      {/* Controls */}
-      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+      {/* Stats */}
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
+        <StatCard label="Total" value={testCases.length} />
+        <StatCard label="AI Generated" value={testCases.filter((t) => t.aiGenerated).length} colorClass="text-blue-600" />
+        <StatCard label="Passed" value={testCases.filter((t) => t.status === "Passed").length} colorClass="text-emerald-600" />
+        <StatCard label="Failed" value={testCases.filter((t) => t.status === "Failed").length} colorClass="text-red-600" />
+        <StatCard label="In Progress" value={testCases.filter((t) => t.status === "In Progress").length} colorClass="text-blue-500" />
+        <StatCard label="Blocked" value={testCases.filter((t) => t.status === "Blocked").length} colorClass="text-amber-600" />
+      </div>
+
+      {/* AI Generator */}
+      <div className="rounded-xl border-2 border-blue-100 bg-gradient-to-r from-blue-50 to-indigo-50 p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Sparkles className="w-4 h-4 text-blue-600" />
+          <span className="font-semibold text-sm">AI Test Case Generator</span>
+          <span className="text-xs text-muted-foreground ml-auto">
+            {process.env.NEXT_PUBLIC_AI_ENABLED !== "false" ? "Powered by Gemini" : "Using smart fallback"}
+          </span>
+        </div>
+        <div className="flex gap-2">
+          <Input
+            placeholder="e.g. user login with invalid credentials, payment with expired card…"
+            value={aiSummary}
+            onChange={(e) => setAiSummary(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && !generating && generateWithAI()}
+            disabled={generating}
+            className="bg-white"
+          />
+          <Button
+            onClick={generateWithAI}
+            disabled={!aiSummary.trim() || generating}
+            className="shrink-0 bg-blue-600 hover:bg-blue-700"
+          >
+            {generating ? (
+              <RefreshCw className="w-4 h-4 animate-spin" />
+            ) : (
+              <><Sparkles className="w-4 h-4 mr-1.5" />Generate</>
+            )}
+          </Button>
+        </div>
+      </div>
+
+      {/* Toolbar */}
+      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
         <div className="flex flex-col sm:flex-row gap-2 flex-1">
-          <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+          <div className="relative max-w-xs w-full">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
-              placeholder="Search test cases..."
+              placeholder="Search test cases…"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10"
+              className="pl-9"
             />
           </div>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-[140px]">
-              <Filter className="w-4 h-4 mr-2" />
+            <SelectTrigger className="w-36">
+              <Filter className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
               <SelectValue placeholder="Status" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Status</SelectItem>
-              <SelectItem value="Not Started">Not Started</SelectItem>
-              <SelectItem value="In Progress">In Progress</SelectItem>
-              <SelectItem value="Passed">Passed</SelectItem>
-              <SelectItem value="Failed">Failed</SelectItem>
-              <SelectItem value="Blocked">Blocked</SelectItem>
+              {["Not Started", "In Progress", "Passed", "Failed", "Blocked"].map((s) => (
+                <SelectItem key={s} value={s}>{s}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
           <Select value={priorityFilter} onValueChange={setPriorityFilter}>
-            <SelectTrigger className="w-[140px]">
+            <SelectTrigger className="w-36">
               <SelectValue placeholder="Priority" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Priority</SelectItem>
-              <SelectItem value="Critical">Critical</SelectItem>
-              <SelectItem value="High">High</SelectItem>
-              <SelectItem value="Medium">Medium</SelectItem>
-              <SelectItem value="Low">Low</SelectItem>
+              {["Critical", "High", "Medium", "Low"].map((p) => (
+                <SelectItem key={p} value={p}>{p}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
-        <div className="flex gap-2">
-          <Button onClick={fetchTestCases} variant="outline" size="sm">
-            <RefreshCw className="w-4 h-4 mr-2" />
-            Refresh
+        <div className="flex gap-2 shrink-0">
+          <Button variant="outline" size="sm" onClick={fetchTestCases}>
+            <RefreshCw className="w-4 h-4" />
           </Button>
-          <Button onClick={exportToExcel} variant="outline" size="sm">
-            <Download className="w-4 h-4 mr-2" />
-            Export Excel
+          <Button variant="outline" size="sm" onClick={exportExcel} disabled={filtered.length === 0}>
+            <Download className="w-4 h-4 mr-1.5" />
+            Export
+          </Button>
+          <Button size="sm" onClick={() => { setManualTC({ ...BLANK_TC }); setManualOpen(true) }}>
+            <Plus className="w-4 h-4 mr-1.5" />
+            Add Manually
           </Button>
         </div>
       </div>
 
-      {/* AI-Powered Test Case Generator */}
-      <Card className="border-2 border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-blue-600" />
-            AI-Powered Test Case Generator
-          </CardTitle>
-          <CardDescription>
-            Enter a brief summary and our AI will generate comprehensive test cases with detailed steps, expected
-            results, and smart categorization
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex gap-2">
-            <Input
-              placeholder="e.g., 'user login with invalid credentials', 'payment processing with expired card', 'file upload with large files'"
-              value={summary}
-              onChange={(e) => setSummary(e.target.value)}
-              className="flex-1"
-              onKeyPress={(e) => e.key === "Enter" && !isGenerating && generateTestCaseFromSummary(summary)}
-              disabled={isGenerating}
-            />
-            <Button
-              onClick={() => generateTestCaseFromSummary(summary)}
-              disabled={!summary.trim() || isGenerating}
-              className="bg-blue-600 hover:bg-blue-700"
-            >
-              {isGenerating ? (
-                <>
-                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-4 h-4 mr-2" />
-                  Generate with AI
-                </>
-              )}
-            </Button>
-          </div>
-          <div className="mt-3 p-3 bg-blue-100 rounded-lg">
-            <div className="text-sm text-blue-800">
-              <strong>✨ AI Features:</strong> Smart categorization, detailed steps, edge case consideration, priority
-              assessment, professional QA language
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Manual Test Case Creator */}
-      <Card className="border-2 border-green-200 bg-gradient-to-r from-green-50 to-emerald-50">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Edit className="w-5 h-5 text-green-600" />
-            Manual Test Case Creator
-          </CardTitle>
-          <CardDescription>Create test cases manually with full control over all fields and details</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button onClick={openManualDialog} className="bg-green-600 hover:bg-green-700">
-            <Edit className="w-4 h-4 mr-2" />
-            Create Manual Test Case
-          </Button>
-          <div className="mt-3 p-3 bg-green-100 rounded-lg">
-            <div className="text-sm text-green-800">
-              <strong>✍️ Manual Features:</strong> Full control, custom fields, step-by-step creation, professional
-              templates
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-6 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-2xl font-bold">{testCases.length}</div>
-            <div className="text-xs text-muted-foreground">Total Cases</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-2xl font-bold text-blue-600">{testCases.filter((tc) => tc.aiGenerated).length}</div>
-            <div className="text-xs text-muted-foreground">AI Generated</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-2xl font-bold text-green-600">
-              {testCases.filter((tc) => tc.status === "Passed").length}
-            </div>
-            <div className="text-xs text-muted-foreground">Passed</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-2xl font-bold text-red-600">
-              {testCases.filter((tc) => tc.status === "Failed").length}
-            </div>
-            <div className="text-xs text-muted-foreground">Failed</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-2xl font-bold text-blue-600">
-              {testCases.filter((tc) => tc.status === "In Progress").length}
-            </div>
-            <div className="text-xs text-muted-foreground">In Progress</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-2xl font-bold text-yellow-600">
-              {testCases.filter((tc) => tc.status === "Blocked").length}
-            </div>
-            <div className="text-xs text-muted-foreground">Blocked</div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Test Cases Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Test Cases ({filteredTestCases.length})</CardTitle>
-        </CardHeader>
-        <CardContent>
+      {/* Table */}
+      {loading ? (
+        <div className="py-16 text-center text-muted-foreground text-sm">Loading…</div>
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          icon={TestTube}
+          title="No test cases found"
+          description={searchTerm || statusFilter !== "all" || priorityFilter !== "all"
+            ? "Try adjusting your filters"
+            : "Generate your first test case with AI or add one manually"}
+        />
+      ) : (
+        <div className="rounded-xl border overflow-hidden bg-white">
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
-                <TableRow>
-                  <TableHead className="w-20">ID</TableHead>
-                  <TableHead className="min-w-[200px]">Scenario</TableHead>
-                  <TableHead className="w-24">Priority</TableHead>
-                  <TableHead className="w-32">Category</TableHead>
-                  <TableHead className="w-32">Status</TableHead>
-                  <TableHead className="w-32">Assignee</TableHead>
-                  <TableHead className="w-32">Created By</TableHead>
-                  <TableHead className="w-24">Created</TableHead>
-                  <TableHead className="w-40">Actions</TableHead>
+                <TableRow className="bg-gray-50 hover:bg-gray-50">
+                  <TableHead className="w-28 font-semibold">ID</TableHead>
+                  <TableHead className="min-w-[200px] font-semibold">Scenario</TableHead>
+                  <TableHead className="w-24 font-semibold">Priority</TableHead>
+                  <TableHead className="w-28 font-semibold">Category</TableHead>
+                  <TableHead className="w-28 font-semibold">Status</TableHead>
+                  <TableHead className="w-28 font-semibold">Created By</TableHead>
+                  <TableHead className="w-24 font-semibold">Date</TableHead>
+                  <TableHead className="w-32 font-semibold">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredTestCases.map((testCase) => (
-                  <TableRow key={testCase._id}>
-                    <TableCell className="font-mono text-sm">
+                {filtered.map((tc) => (
+                  <TableRow key={tc._id} className="hover:bg-blue-50/30 transition-colors">
+                    <TableCell className="font-mono text-xs">
                       <div className="flex items-center gap-1">
-                        {testCase.id}
-                        {testCase.aiGenerated && <Sparkles className="w-3 h-3 text-blue-500" title="AI Generated" />}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="max-w-[200px] truncate" title={testCase.scenario}>
-                        {testCase.scenario}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={getPriorityColor(testCase.priority)}>{testCase.priority}</Badge>
-                    </TableCell>
-                    <TableCell>{testCase.category}</TableCell>
-                    <TableCell>
-                      <Badge className={getStatusColor(testCase.status)}>{testCase.status}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="text-sm">
-                        {testCase.assignee ? (
-                          <div>
-                            <div className="font-medium">{testCase.assignee.name}</div>
-                            <div className="text-xs text-muted-foreground">{testCase.assignee.role}</div>
-                          </div>
-                        ) : (
-                          <span className="text-muted-foreground">Unassigned</span>
+                        {tc.id}
+                        {tc.aiGenerated && (
+                          <Sparkles className="w-3 h-3 text-blue-400" title="AI generated" />
                         )}
                       </div>
                     </TableCell>
                     <TableCell>
-                      <div className="text-sm">
-                        <div className="font-medium">{testCase.createdBy.name}</div>
-                        <div className="text-xs text-muted-foreground">{testCase.createdBy.role}</div>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {new Date(testCase.createdAt).toLocaleDateString()}
+                      <span className="text-sm line-clamp-2" title={tc.scenario}>{tc.scenario}</span>
                     </TableCell>
                     <TableCell>
-                      <div className="flex gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => openViewDialog(testCase)}
-                          className="text-blue-600 hover:text-blue-800"
-                          title="View Details"
-                        >
-                          <Eye className="w-4 h-4" />
+                      <Badge className={`text-xs ${PRIORITY_COLORS[tc.priority]}`}>{tc.priority}</Badge>
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{tc.category}</TableCell>
+                    <TableCell>
+                      <Badge className={`text-xs ${STATUS_COLORS[tc.status]}`}>{tc.status}</Badge>
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      <div className="font-medium">{tc.createdBy.name}</div>
+                      <div className="text-muted-foreground">{tc.createdBy.role}</div>
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{formatDate(tc.createdAt)}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-0.5">
+                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                          onClick={() => setViewTC(tc)} title="View">
+                          <Eye className="w-3.5 h-3.5" />
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => openEditDialog(testCase)}
-                          className="text-green-600 hover:text-green-800"
-                          title="Edit Test Case"
-                        >
-                          <Edit className="w-4 h-4" />
+                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50"
+                          onClick={() => setEditTC({ ...tc })} title="Edit">
+                          <Edit className="w-3.5 h-3.5" />
                         </Button>
-                        {testCase.aiGenerated && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => regenerateTestCase(testCase)}
-                            disabled={isGenerating}
-                            className="text-purple-600 hover:text-purple-800"
-                            title="Regenerate with AI"
-                          >
-                            <RefreshCw className={`w-4 h-4 ${isGenerating ? "animate-spin" : ""}`} />
+                        {tc.aiGenerated && (
+                          <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-purple-600 hover:text-purple-700 hover:bg-purple-50"
+                            onClick={() => regenerateTC(tc)} disabled={generating} title="Regenerate">
+                            <RefreshCw className={`w-3.5 h-3.5 ${generating ? "animate-spin" : ""}`} />
                           </Button>
                         )}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => deleteTestCase(testCase.id)}
-                          className="text-red-600 hover:text-red-800"
-                          title="Delete Test Case"
-                        >
-                          <Trash2 className="w-4 h-4" />
+                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-500 hover:text-red-600 hover:bg-red-50"
+                          onClick={() => deleteTC(tc.id)} title="Delete">
+                          <Trash2 className="w-3.5 h-3.5" />
                         </Button>
                       </div>
                     </TableCell>
@@ -738,215 +420,117 @@ export function TestCaseSheet({ projectId }: { projectId?: string }) {
               </TableBody>
             </Table>
           </div>
-          {filteredTestCases.length === 0 && (
-            <div className="text-center py-8 text-muted-foreground">
-              No test cases found. Create your first AI-powered test case to get started.
-            </div>
-          )}
-        </CardContent>
-      </Card>
+        </div>
+      )}
 
-      {/* View Test Case Dialog */}
-      <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+      {/* ── View Dialog ─────────────────────────────────────────────────── */}
+      <Dialog open={!!viewTC} onOpenChange={() => setViewTC(null)}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Eye className="w-5 h-5" />
-              Test Case Details - {viewingTestCase?.id}
-              {viewingTestCase?.aiGenerated && <Sparkles className="w-4 h-4 text-blue-500" title="AI Generated" />}
+              {viewTC?.id}
+              {viewTC?.aiGenerated && <Sparkles className="w-4 h-4 text-blue-400" />}
             </DialogTitle>
           </DialogHeader>
-          {viewingTestCase && (
-            <div className="space-y-6">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-sm font-medium text-gray-700">Priority</Label>
-                  <Badge className={getPriorityColor(viewingTestCase.priority)}>{viewingTestCase.priority}</Badge>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium text-gray-700">Category</Label>
-                  <p className="text-sm">{viewingTestCase.category}</p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium text-gray-700">Status</Label>
-                  <Badge className={getStatusColor(viewingTestCase.status)}>{viewingTestCase.status}</Badge>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium text-gray-700">Assignee</Label>
-                  <p className="text-sm">{viewingTestCase.assignee ? viewingTestCase.assignee.name : "Not assigned"}</p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium text-gray-700">Created By</Label>
-                  <p className="text-sm">
-                    {viewingTestCase.createdBy.name} ({viewingTestCase.createdBy.role})
-                  </p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium text-gray-700">Created At</Label>
-                  <p className="text-sm">{new Date(viewingTestCase.createdAt).toLocaleString()}</p>
-                </div>
+          {viewTC && (
+            <div className="space-y-4 text-sm">
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  ["Priority", <Badge className={`text-xs ${PRIORITY_COLORS[viewTC.priority]}`}>{viewTC.priority}</Badge>],
+                  ["Status", <Badge className={`text-xs ${STATUS_COLORS[viewTC.status]}`}>{viewTC.status}</Badge>],
+                  ["Category", viewTC.category],
+                  ["Assignee", viewTC.assignee?.name ?? "Unassigned"],
+                  ["Created By", `${viewTC.createdBy.name} (${viewTC.createdBy.role})`],
+                  ["Created", formatDate(viewTC.createdAt)],
+                ].map(([label, val]) => (
+                  <div key={String(label)}>
+                    <div className="text-xs text-muted-foreground font-medium mb-0.5">{label}</div>
+                    <div>{val}</div>
+                  </div>
+                ))}
               </div>
-
-              <div>
-                <Label className="text-sm font-medium text-gray-700">Test Scenario</Label>
-                <Card className="mt-2">
-                  <CardContent className="p-4">
-                    <p className="text-sm">{viewingTestCase.scenario}</p>
-                  </CardContent>
-                </Card>
-              </div>
-
-              <div>
-                <Label className="text-sm font-medium text-gray-700">Test Steps</Label>
-                <Card className="mt-2">
-                  <CardContent className="p-4">
-                    <pre className="text-sm whitespace-pre-wrap">{viewingTestCase.steps}</pre>
-                  </CardContent>
-                </Card>
-              </div>
-
-              <div>
-                <Label className="text-sm font-medium text-gray-700">Expected Result</Label>
-                <Card className="mt-2">
-                  <CardContent className="p-4">
-                    <p className="text-sm">{viewingTestCase.expected}</p>
-                  </CardContent>
-                </Card>
-              </div>
-
-              <div>
-                <Label className="text-sm font-medium text-gray-700">Actual Result</Label>
-                <Card className="mt-2">
-                  <CardContent className="p-4">
-                    <p className="text-sm">{viewingTestCase.actual || "Not executed yet"}</p>
-                  </CardContent>
-                </Card>
-              </div>
-
-              <div>
-                <Label className="text-sm font-medium text-gray-700">Remarks</Label>
-                <Card className="mt-2">
-                  <CardContent className="p-4">
-                    <p className="text-sm">{viewingTestCase.remarks || "No remarks"}</p>
-                  </CardContent>
-                </Card>
-              </div>
+              {[
+                ["Scenario", viewTC.scenario],
+                ["Test Steps", viewTC.steps],
+                ["Expected Result", viewTC.expected],
+                ["Actual Result", viewTC.actual || "Not yet executed"],
+                ["Remarks", viewTC.remarks || "—"],
+              ].map(([label, val]) => (
+                <div key={String(label)}>
+                  <div className="text-xs font-medium text-muted-foreground mb-1">{label}</div>
+                  <div className="rounded-lg bg-gray-50 border px-3 py-2 whitespace-pre-wrap text-sm">{val}</div>
+                </div>
+              ))}
             </div>
           )}
         </DialogContent>
       </Dialog>
 
-      {/* Edit Test Case Dialog */}
-      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+      {/* ── Edit Dialog ──────────────────────────────────────────────────── */}
+      <Dialog open={!!editTC} onOpenChange={() => setEditTC(null)}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Edit className="w-5 h-5" />
-              Edit Test Case - {editingTestCase?.id}
-            </DialogTitle>
+            <DialogTitle>Edit Test Case — {editTC?.id}</DialogTitle>
           </DialogHeader>
-          {editingTestCase && (
+          {editTC && (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="priority">Priority</Label>
-                  <Select
-                    value={editingTestCase.priority}
-                    onValueChange={(value: any) => setEditingTestCase({ ...editingTestCase, priority: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Priority</Label>
+                  <Select value={editTC.priority} onValueChange={(v: any) => setEditTC({ ...editTC, priority: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Low">Low</SelectItem>
-                      <SelectItem value="Medium">Medium</SelectItem>
-                      <SelectItem value="High">High</SelectItem>
-                      <SelectItem value="Critical">Critical</SelectItem>
+                      {["Low", "Medium", "High", "Critical"].map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
-                <div>
-                  <Label htmlFor="category">Category</Label>
-                  <Input
-                    value={editingTestCase.category}
-                    onChange={(e) => setEditingTestCase({ ...editingTestCase, category: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="status">Status</Label>
-                  <Select
-                    value={editingTestCase.status}
-                    onValueChange={(value: any) => setEditingTestCase({ ...editingTestCase, status: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
+                <div className="space-y-1.5">
+                  <Label>Status</Label>
+                  <Select value={editTC.status} onValueChange={(v: any) => setEditTC({ ...editTC, status: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Not Started">Not Started</SelectItem>
-                      <SelectItem value="In Progress">In Progress</SelectItem>
-                      <SelectItem value="Passed">Passed</SelectItem>
-                      <SelectItem value="Failed">Failed</SelectItem>
-                      <SelectItem value="Blocked">Blocked</SelectItem>
+                      {["Not Started", "In Progress", "Passed", "Failed", "Blocked"].map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Category</Label>
+                  <Select value={editTC.category} onValueChange={(v) => setEditTC({ ...editTC, category: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {CATEGORIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
               </div>
-
-              <div>
-                <Label htmlFor="scenario">Test Scenario</Label>
-                <Textarea
-                  value={editingTestCase.scenario}
-                  onChange={(e) => setEditingTestCase({ ...editingTestCase, scenario: e.target.value })}
-                  rows={2}
-                />
+              <div className="space-y-1.5">
+                <Label>Scenario</Label>
+                <Textarea rows={2} value={editTC.scenario} onChange={(e) => setEditTC({ ...editTC, scenario: e.target.value })} />
               </div>
-
-              <div>
-                <Label htmlFor="steps">Test Steps</Label>
-                <Textarea
-                  value={editingTestCase.steps}
-                  onChange={(e) => setEditingTestCase({ ...editingTestCase, steps: e.target.value })}
-                  rows={6}
-                />
+              <div className="space-y-1.5">
+                <Label>Test Steps</Label>
+                <Textarea rows={5} value={editTC.steps} onChange={(e) => setEditTC({ ...editTC, steps: e.target.value })} />
               </div>
-
-              <div>
-                <Label htmlFor="expected">Expected Result</Label>
-                <Textarea
-                  value={editingTestCase.expected}
-                  onChange={(e) => setEditingTestCase({ ...editingTestCase, expected: e.target.value })}
-                  rows={3}
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Expected Result</Label>
+                  <Textarea rows={3} value={editTC.expected} onChange={(e) => setEditTC({ ...editTC, expected: e.target.value })} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Actual Result</Label>
+                  <Textarea rows={3} value={editTC.actual} onChange={(e) => setEditTC({ ...editTC, actual: e.target.value })} placeholder="Fill after execution…" />
+                </div>
               </div>
-
-              <div>
-                <Label htmlFor="actual">Actual Result</Label>
-                <Textarea
-                  value={editingTestCase.actual}
-                  onChange={(e) => setEditingTestCase({ ...editingTestCase, actual: e.target.value })}
-                  rows={3}
-                  placeholder="Enter actual result after execution..."
-                />
+              <div className="space-y-1.5">
+                <Label>Remarks</Label>
+                <Textarea rows={2} value={editTC.remarks} onChange={(e) => setEditTC({ ...editTC, remarks: e.target.value })} placeholder="Optional notes…" />
               </div>
-
-              <div>
-                <Label htmlFor="remarks">Remarks</Label>
-                <Textarea
-                  value={editingTestCase.remarks}
-                  onChange={(e) => setEditingTestCase({ ...editingTestCase, remarks: e.target.value })}
-                  rows={2}
-                  placeholder="Add any additional remarks..."
-                />
-              </div>
-
-              <div className="flex gap-2 pt-4">
-                <Button onClick={saveEditedTestCase} className="flex-1">
-                  <Save className="w-4 h-4 mr-2" />
-                  Save Changes
+              <div className="flex gap-2 pt-2">
+                <Button className="flex-1" onClick={saveEdit}>
+                  <Save className="w-4 h-4 mr-1.5" />Save Changes
                 </Button>
-                <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
-                  <X className="w-4 h-4 mr-2" />
-                  Cancel
+                <Button variant="outline" onClick={() => setEditTC(null)}>
+                  <X className="w-4 h-4 mr-1.5" />Cancel
                 </Button>
               </div>
             </div>
@@ -954,136 +538,70 @@ export function TestCaseSheet({ projectId }: { projectId?: string }) {
         </DialogContent>
       </Dialog>
 
-      {/* Manual Test Case Creation Dialog */}
-      <Dialog open={isManualDialogOpen} onOpenChange={setIsManualDialogOpen}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+      {/* ── Manual Create Dialog ─────────────────────────────────────────── */}
+      <Dialog open={manualOpen} onOpenChange={setManualOpen}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Edit className="w-5 h-5" />
-              Create Manual Test Case
-            </DialogTitle>
+            <DialogTitle>Create Test Case</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="priority">Priority</Label>
-                <Select
-                  value={manualTestCase.priority}
-                  onValueChange={(value: any) => setManualTestCase({ ...manualTestCase, priority: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-1.5">
+                <Label>Priority</Label>
+                <Select value={manualTC.priority} onValueChange={(v: any) => setManualTC({ ...manualTC, priority: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Low">Low</SelectItem>
-                    <SelectItem value="Medium">Medium</SelectItem>
-                    <SelectItem value="High">High</SelectItem>
-                    <SelectItem value="Critical">Critical</SelectItem>
+                    {["Low", "Medium", "High", "Critical"].map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
-              <div>
-                <Label htmlFor="category">Category</Label>
-                <Select
-                  value={manualTestCase.category}
-                  onValueChange={(value) => setManualTestCase({ ...manualTestCase, category: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+              <div className="space-y-1.5">
+                <Label>Status</Label>
+                <Select value={manualTC.status} onValueChange={(v: any) => setManualTC({ ...manualTC, status: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Functional">Functional</SelectItem>
-                    <SelectItem value="UI/UX">UI/UX</SelectItem>
-                    <SelectItem value="Performance">Performance</SelectItem>
-                    <SelectItem value="Security">Security</SelectItem>
-                    <SelectItem value="Integration">Integration</SelectItem>
-                    <SelectItem value="Payment">Payment</SelectItem>
-                    <SelectItem value="API">API</SelectItem>
-                    <SelectItem value="Database">Database</SelectItem>
-                    <SelectItem value="Mobile">Mobile</SelectItem>
-                    <SelectItem value="Web">Web</SelectItem>
+                    {["Not Started", "In Progress", "Passed", "Failed", "Blocked"].map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
-              <div>
-                <Label htmlFor="status">Status</Label>
-                <Select
-                  value={manualTestCase.status}
-                  onValueChange={(value: any) => setManualTestCase({ ...manualTestCase, status: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+              <div className="space-y-1.5">
+                <Label>Category</Label>
+                <Select value={manualTC.category} onValueChange={(v) => setManualTC({ ...manualTC, category: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Not Started">Not Started</SelectItem>
-                    <SelectItem value="In Progress">In Progress</SelectItem>
-                    <SelectItem value="Passed">Passed</SelectItem>
-                    <SelectItem value="Failed">Failed</SelectItem>
-                    <SelectItem value="Blocked">Blocked</SelectItem>
+                    {CATEGORIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
             </div>
-
-            <div>
-              <Label htmlFor="scenario">Test Scenario *</Label>
-              <Textarea
-                value={manualTestCase.scenario}
-                onChange={(e) => setManualTestCase({ ...manualTestCase, scenario: e.target.value })}
-                rows={2}
-                placeholder="Describe what you want to test..."
-                required
-              />
+            <div className="space-y-1.5">
+              <Label>Scenario *</Label>
+              <Textarea rows={2} value={manualTC.scenario} onChange={(e) => setManualTC({ ...manualTC, scenario: e.target.value })} placeholder="Describe what you want to test…" />
             </div>
-
-            <div>
-              <Label htmlFor="steps">Test Steps</Label>
-              <Textarea
-                value={manualTestCase.steps}
-                onChange={(e) => setManualTestCase({ ...manualTestCase, steps: e.target.value })}
-                rows={6}
-                placeholder="1. Step one&#10;2. Step two&#10;3. Step three..."
-              />
+            <div className="space-y-1.5">
+              <Label>Test Steps *</Label>
+              <Textarea rows={5} value={manualTC.steps} onChange={(e) => setManualTC({ ...manualTC, steps: e.target.value })} placeholder={"1. Navigate to…\n2. Click…\n3. Verify…"} />
             </div>
-
-            <div>
-              <Label htmlFor="expected">Expected Result</Label>
-              <Textarea
-                value={manualTestCase.expected}
-                onChange={(e) => setManualTestCase({ ...manualTestCase, expected: e.target.value })}
-                rows={3}
-                placeholder="What should happen when the test is executed..."
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Expected Result *</Label>
+                <Textarea rows={3} value={manualTC.expected} onChange={(e) => setManualTC({ ...manualTC, expected: e.target.value })} placeholder="What should happen…" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Actual Result</Label>
+                <Textarea rows={3} value={manualTC.actual} onChange={(e) => setManualTC({ ...manualTC, actual: e.target.value })} placeholder="Fill after execution…" />
+              </div>
             </div>
-
-            <div>
-              <Label htmlFor="actual">Actual Result</Label>
-              <Textarea
-                value={manualTestCase.actual}
-                onChange={(e) => setManualTestCase({ ...manualTestCase, actual: e.target.value })}
-                rows={3}
-                placeholder="What actually happened (fill after execution)..."
-              />
+            <div className="space-y-1.5">
+              <Label>Remarks</Label>
+              <Textarea rows={2} value={manualTC.remarks} onChange={(e) => setManualTC({ ...manualTC, remarks: e.target.value })} placeholder="Optional notes…" />
             </div>
-
-            <div>
-              <Label htmlFor="remarks">Remarks</Label>
-              <Textarea
-                value={manualTestCase.remarks}
-                onChange={(e) => setManualTestCase({ ...manualTestCase, remarks: e.target.value })}
-                rows={2}
-                placeholder="Any additional notes or comments..."
-              />
-            </div>
-
-            <div className="flex gap-2 pt-4">
-              <Button onClick={saveManualTestCase} className="flex-1">
-                <Save className="w-4 h-4 mr-2" />
-                Create Test Case
+            <div className="flex gap-2 pt-2">
+              <Button className="flex-1" onClick={saveManual}>
+                <Plus className="w-4 h-4 mr-1.5" />Create Test Case
               </Button>
-              <Button variant="outline" onClick={() => setIsManualDialogOpen(false)}>
-                <X className="w-4 h-4 mr-2" />
-                Cancel
+              <Button variant="outline" onClick={() => setManualOpen(false)}>
+                <X className="w-4 h-4 mr-1.5" />Cancel
               </Button>
             </div>
           </div>

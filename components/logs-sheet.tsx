@@ -1,311 +1,213 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Badge } from "@/components/ui/badge"
-import { Input } from "@/components/ui/input"
+import { useState, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
-import { Search, RefreshCw, Activity, User, Calendar, Filter } from "lucide-react"
+import { Input } from "@/components/ui/input"
+import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { StatCard } from "@/components/ui/stat-card"
+import { EmptyState } from "@/components/ui/empty-state"
+import { Search, RefreshCw, Activity, User, Filter } from "lucide-react"
 import { useAuth } from "@/contexts/AuthContext"
+import { useToast } from "@/hooks/use-toast"
+import { formatDateTime, formatAction } from "@/lib/utils"
 
 interface ActivityLog {
   _id: string
-  user: {
-    _id: string
-    name: string
-    email: string
-    role: string
-  }
+  user: { _id: string; name: string; email: string; role: string }
   action: string
   entityType?: string
   entityId?: string
   description: string
-  details?: any
+  details?: Record<string, unknown>
   createdAt: string
 }
 
-export function LogsSheet() {
+interface Pagination {
+  page: number
+  limit: number
+  total: number
+  pages: number
+}
+
+const ACTION_COLORS: Record<string, string> = {
+  created_test_case: "bg-emerald-100 text-emerald-700",
+  created_bug_report: "bg-emerald-100 text-emerald-700",
+  created_project: "bg-emerald-100 text-emerald-700",
+  user_registered: "bg-emerald-100 text-emerald-700",
+  company_created: "bg-emerald-100 text-emerald-700",
+  updated_test_case: "bg-blue-100 text-blue-700",
+  updated_bug_report: "bg-blue-100 text-blue-700",
+  updated_project: "bg-blue-100 text-blue-700",
+  status_changed: "bg-blue-100 text-blue-700",
+  deleted_test_case: "bg-red-100 text-red-700",
+  deleted_bug_report: "bg-red-100 text-red-700",
+  deleted_project: "bg-red-100 text-red-700",
+  user_login: "bg-amber-100 text-amber-700",
+  user_logout: "bg-gray-100 text-gray-600",
+  assigned_task: "bg-purple-100 text-purple-700",
+}
+
+function token() { return localStorage.getItem("token") }
+
+export function LogsSheet({ projectId }: { projectId?: string }) {
   const [logs, setLogs] = useState<ActivityLog[]>([])
   const [loading, setLoading] = useState(true)
+  const [pagination, setPagination] = useState<Pagination>({ page: 1, limit: 50, total: 0, pages: 0 })
   const [searchTerm, setSearchTerm] = useState("")
   const [actionFilter, setActionFilter] = useState("all")
   const [userFilter, setUserFilter] = useState("all")
-  const [pagination, setPagination] = useState({
-    page: 1,
-    limit: 50,
-    total: 0,
-    pages: 0,
-  })
   const { user } = useAuth()
+  const { toast } = useToast()
 
-  useEffect(() => {
-    fetchLogs()
-  }, [pagination.page])
-
-  const fetchLogs = async () => {
+  const fetchLogs = useCallback(async (page = 1) => {
     if (!user) return
-
     setLoading(true)
     try {
-      const token = localStorage.getItem("token")
-      const response = await fetch(`/api/logs?page=${pagination.page}&limit=${pagination.limit}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+      const params = new URLSearchParams({ page: String(page), limit: "50" })
+      if (projectId) params.set("projectId", projectId)
+      const res = await fetch(`/api/logs?${params}`, {
+        headers: { Authorization: `Bearer ${token()}` },
       })
-
-      if (response.ok) {
-        const data = await response.json()
+      if (res.ok) {
+        const data = await res.json()
         setLogs(data.logs)
         setPagination(data.pagination)
+      } else {
+        toast({ title: "Error", description: "Failed to load activity logs", variant: "destructive" })
       }
-    } catch (error) {
-      console.error("Failed to fetch logs:", error)
+    } catch {
+      toast({ title: "Error", description: "Failed to load activity logs", variant: "destructive" })
     } finally {
       setLoading(false)
     }
-  }
+  }, [user, projectId, toast])
 
-  const getActionColor = (action: string) => {
-    switch (action) {
-      case "created_test_case":
-      case "created_bug_report":
-      case "user_registered":
-        return "bg-green-100 text-green-800"
-      case "updated_test_case":
-      case "updated_bug_report":
-      case "status_changed":
-        return "bg-blue-100 text-blue-800"
-      case "deleted_test_case":
-      case "deleted_bug_report":
-        return "bg-red-100 text-red-800"
-      case "assigned_task":
-        return "bg-purple-100 text-purple-800"
-      case "user_login":
-        return "bg-yellow-100 text-yellow-800"
-      case "user_logout":
-        return "bg-gray-100 text-gray-800"
-      default:
-        return "bg-gray-100 text-gray-800"
-    }
-  }
+  useEffect(() => { fetchLogs(1) }, [fetchLogs])
 
-  const getActionIcon = (action: string) => {
-    switch (action) {
-      case "user_login":
-      case "user_logout":
-      case "user_registered":
-        return <User className="w-3 h-3" />
-      default:
-        return <Activity className="w-3 h-3" />
-    }
-  }
-
-  const formatAction = (action: string) => {
-    return action
-      .split("_")
-      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(" ")
-  }
-
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString)
-    return date.toLocaleString()
-  }
-
-  const filteredLogs = logs.filter((log) => {
-    const matchesSearch =
-      log.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.user.email.toLowerCase().includes(searchTerm.toLowerCase())
-
-    const matchesAction = actionFilter === "all" || log.action === actionFilter
-    const matchesUser = userFilter === "all" || log.user._id === userFilter
-
-    return matchesSearch && matchesAction && matchesUser
+  const filtered = logs.filter((log) => {
+    const q = searchTerm.toLowerCase()
+    const matchSearch = !q
+      || log.description.toLowerCase().includes(q)
+      || log.user.name.toLowerCase().includes(q)
+      || log.user.email.toLowerCase().includes(q)
+    const matchAction = actionFilter === "all" || log.action === actionFilter
+    const matchUser = userFilter === "all" || log.user._id === userFilter
+    return matchSearch && matchAction && matchUser
   })
 
-  const uniqueUsers = Array.from(new Set(logs.map((log) => log.user._id)))
-    .map((userId) => logs.find((log) => log.user._id === userId)?.user)
-    .filter(Boolean)
-
-  const uniqueActions = Array.from(new Set(logs.map((log) => log.action)))
+  const uniqueActions = [...new Set(logs.map((l) => l.action))]
+  const uniqueUsers = Object.values(
+    Object.fromEntries(logs.map((l) => [l.user._id, l.user]))
+  )
 
   return (
     <div className="space-y-6">
-      {/* Controls */}
-      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <StatCard label="Total Events" value={pagination.total} />
+        <StatCard label="Created" value={logs.filter((l) => l.action.startsWith("created")).length} colorClass="text-emerald-600" />
+        <StatCard label="Updated" value={logs.filter((l) => l.action.startsWith("updated")).length} colorClass="text-blue-600" />
+        <StatCard label="Active Users" value={uniqueUsers.length} colorClass="text-purple-600" />
+      </div>
+
+      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
         <div className="flex flex-col sm:flex-row gap-2 flex-1">
-          <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-            <Input
-              placeholder="Search activity logs..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10"
-            />
+          <div className="relative max-w-xs w-full">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input placeholder="Search activity…" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-9" />
           </div>
           <Select value={actionFilter} onValueChange={setActionFilter}>
-            <SelectTrigger className="w-[160px]">
-              <Filter className="w-4 h-4 mr-2" />
+            <SelectTrigger className="w-44">
+              <Filter className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
               <SelectValue placeholder="Action" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Actions</SelectItem>
-              {uniqueActions.map((action) => (
-                <SelectItem key={action} value={action}>
-                  {formatAction(action)}
-                </SelectItem>
-              ))}
+              {uniqueActions.map((a) => <SelectItem key={a} value={a}>{formatAction(a)}</SelectItem>)}
             </SelectContent>
           </Select>
           <Select value={userFilter} onValueChange={setUserFilter}>
-            <SelectTrigger className="w-[160px]">
-              <User className="w-4 h-4 mr-2" />
+            <SelectTrigger className="w-40">
+              <User className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
               <SelectValue placeholder="User" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Users</SelectItem>
-              {uniqueUsers.map((user) => (
-                <SelectItem key={user?._id} value={user?._id || ""}>
-                  {user?.name}
-                </SelectItem>
-              ))}
+              {uniqueUsers.map((u) => <SelectItem key={u._id} value={u._id}>{u.name}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>
-        <Button onClick={fetchLogs} variant="outline" size="sm" disabled={loading}>
-          <RefreshCw className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`} />
-          Refresh
+        <Button variant="outline" size="sm" onClick={() => fetchLogs(pagination.page)} disabled={loading}>
+          <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
         </Button>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-2xl font-bold">{logs.length}</div>
-            <div className="text-xs text-muted-foreground">Total Activities</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-2xl font-bold text-green-600">
-              {logs.filter((log) => log.action.includes("created")).length}
-            </div>
-            <div className="text-xs text-muted-foreground">Created</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-2xl font-bold text-blue-600">
-              {logs.filter((log) => log.action.includes("updated")).length}
-            </div>
-            <div className="text-xs text-muted-foreground">Updated</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-2xl font-bold text-purple-600">{uniqueUsers.length}</div>
-            <div className="text-xs text-muted-foreground">Active Users</div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Activity Logs Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Activity className="w-5 h-5" />
-            Activity Logs ({filteredLogs.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
+      {loading ? (
+        <div className="py-16 text-center text-muted-foreground text-sm">Loading activity…</div>
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          icon={Activity}
+          title="No activity found"
+          description={searchTerm || actionFilter !== "all" || userFilter !== "all"
+            ? "Try adjusting your filters"
+            : "Activity will appear here as your team works"}
+        />
+      ) : (
+        <div className="rounded-xl border overflow-hidden bg-white">
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
-                <TableRow>
-                  <TableHead className="w-32">User</TableHead>
-                  <TableHead className="w-24">Role</TableHead>
-                  <TableHead className="w-32">Action</TableHead>
-                  <TableHead className="min-w-[300px]">Description</TableHead>
-                  <TableHead className="w-40">Date & Time</TableHead>
+                <TableRow className="bg-gray-50 hover:bg-gray-50">
+                  <TableHead className="w-36 font-semibold">User</TableHead>
+                  <TableHead className="w-20 font-semibold">Role</TableHead>
+                  <TableHead className="w-40 font-semibold">Action</TableHead>
+                  <TableHead className="font-semibold">Description</TableHead>
+                  <TableHead className="w-40 font-semibold">Date &amp; Time</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredLogs.map((log) => (
-                  <TableRow key={log._id}>
+                {filtered.map((log) => (
+                  <TableRow key={log._id} className="hover:bg-gray-50/50 transition-colors">
                     <TableCell>
-                      <div className="flex flex-col">
-                        <span className="font-medium text-sm">{log.user.name}</span>
-                        <span className="text-xs text-muted-foreground">{log.user.email}</span>
-                      </div>
+                      <div className="text-sm font-medium">{log.user.name}</div>
+                      <div className="text-xs text-muted-foreground">{log.user.email}</div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline" className="text-xs">
-                        {log.user.role}
-                      </Badge>
+                      <Badge variant="outline" className="text-xs">{log.user.role}</Badge>
                     </TableCell>
                     <TableCell>
-                      <Badge className={`${getActionColor(log.action)} flex items-center gap-1`}>
-                        {getActionIcon(log.action)}
+                      <Badge className={`text-xs ${ACTION_COLORS[log.action] ?? "bg-gray-100 text-gray-600"}`}>
                         {formatAction(log.action)}
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <div className="max-w-[300px]">
-                        <p className="text-sm">{log.description}</p>
-                        {log.entityId && <p className="text-xs text-muted-foreground mt-1">ID: {log.entityId}</p>}
-                      </div>
+                      <p className="text-sm">{log.description}</p>
+                      {log.entityId && (
+                        <p className="text-xs text-muted-foreground mt-0.5 font-mono">{log.entityId}</p>
+                      )}
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      <div className="flex items-center gap-1">
-                        <Calendar className="w-3 h-3" />
-                        {formatDate(log.createdAt)}
-                      </div>
+                    <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                      {formatDateTime(log.createdAt)}
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </div>
-          {filteredLogs.length === 0 && (
-            <div className="text-center py-8 text-muted-foreground">
-              {loading ? (
-                <div className="flex items-center justify-center gap-2">
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  Loading activity logs...
-                </div>
-              ) : (
-                "No activity logs found."
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+        </div>
+      )}
 
-      {/* Pagination */}
       {pagination.pages > 1 && (
-        <div className="flex justify-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setPagination((prev) => ({ ...prev, page: prev.page - 1 }))}
-            disabled={pagination.page === 1 || loading}
-          >
+        <div className="flex items-center justify-center gap-3">
+          <Button variant="outline" size="sm" onClick={() => fetchLogs(pagination.page - 1)} disabled={pagination.page === 1 || loading}>
             Previous
           </Button>
-          <span className="flex items-center px-4 text-sm text-muted-foreground">
+          <span className="text-sm text-muted-foreground">
             Page {pagination.page} of {pagination.pages}
+            <span className="ml-2 text-xs">({pagination.total} total)</span>
           </span>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setPagination((prev) => ({ ...prev, page: prev.page + 1 }))}
-            disabled={pagination.page === pagination.pages || loading}
-          >
+          <Button variant="outline" size="sm" onClick={() => fetchLogs(pagination.page + 1)} disabled={pagination.page === pagination.pages || loading}>
             Next
           </Button>
         </div>

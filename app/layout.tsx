@@ -5,9 +5,12 @@ import { Toaster } from "@/components/toaster"
 import { AuthProvider } from "@/contexts/AuthContext"
 
 export const metadata: Metadata = {
-  title: "v0 App",
-  description: "Created with v0",
-  generator: "v0.dev",
+  title: {
+    default: "QA Tool",
+    template: "%s | QA Tool",
+  },
+  description: "Professional QA test case and bug report management platform",
+  keywords: ["QA", "testing", "bug reports", "test cases", "quality assurance"],
 }
 
 export default function RootLayout({
@@ -16,7 +19,7 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body>
         <AuthProvider>
           {children}

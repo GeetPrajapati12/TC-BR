@@ -1,47 +1,81 @@
-import { NextResponse } from "next/server"
-import jwt from "jsonwebtoken"
 import dbConnect from "@/lib/mongodb"
 import Project from "@/models/Project"
-import User from "@/models/User"
+import ActivityLog from "@/models/ActivityLog"
+import { getAuthenticatedUser } from "@/lib/auth"
+import { ok, badRequest, notFound, withErrorHandling } from "@/lib/api-response"
 
-const JWT_SECRET = process.env.JWT_SECRET
-
-async function getAuthenticatedUser(request) {
-  const authHeader = request.headers.get("authorization")
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    throw new Error("No token provided")
-  }
-  const token = authHeader.substring(7)
-  const decoded = jwt.verify(token, JWT_SECRET)
+export const GET = withErrorHandling(async (request, { params }) => {
   await dbConnect()
-  const user = await User.findById(decoded.userId).populate("company", "name slug")
-  if (!user) throw new Error("User not found")
-  return user
-}
+  const user = await getAuthenticatedUser(request)
+  const { id } = await params
 
-// GET /api/projects/[id] - returns project details if it belongs to user's company
-export async function GET(request, { params }) {
-  try {
-    const user = await getAuthenticatedUser(request)
-    const { id } = await params
+  const project = await Project.findOne({ _id: id, company: user.company._id, isActive: true })
+    .populate("lead", "name email role")
+    .populate("members.user", "name email role")
+    .lean()
 
-    const project = await Project.findOne({ _id: id, company: user.company._id })
-      .populate("lead", "name email role")
-      .populate("members.user", "name email role")
+  if (!project) return notFound("Project not found")
+  return ok(project)
+})
 
-    if (!project) {
-      return NextResponse.json({ message: "Project not found" }, { status: 404 })
-    }
+export const PUT = withErrorHandling(async (request, { params }) => {
+  await dbConnect()
+  const user = await getAuthenticatedUser(request)
+  const { id } = await params
 
-    return NextResponse.json(project)
-  } catch (error) {
-    console.error("Project GET error:", error)
-    if (error.name === "JsonWebTokenError") {
-      return NextResponse.json({ message: "Invalid token" }, { status: 401 })
-    }
-    if (error.message === "No token provided") {
-      return NextResponse.json({ message: "No token provided" }, { status: 401 })
-    }
-    return NextResponse.json({ message: "Internal server error" }, { status: 500 })
-  }
-}
+  const updates = await request.json()
+  // Prevent overwriting protected fields
+  delete updates._id
+  delete updates.company
+  delete updates.key
+  delete updates.lead
+
+  const project = await Project.findOneAndUpdate(
+    { _id: id, company: user.company._id },
+    updates,
+    { new: true, runValidators: true }
+  )
+    .populate("lead", "name email role")
+    .populate("members.user", "name email role")
+
+  if (!project) return notFound("Project not found")
+
+  await ActivityLog.create({
+    user: user._id,
+    company: user.company._id,
+    project: project._id,
+    action: "updated_project",
+    entityType: "Project",
+    entityId: project._id.toString(),
+    description: `${user.name} updated project "${project.name}"`,
+    details: { updatedFields: Object.keys(updates) },
+  })
+
+  return ok(project)
+})
+
+export const DELETE = withErrorHandling(async (request, { params }) => {
+  await dbConnect()
+  const user = await getAuthenticatedUser(request)
+  const { id } = await params
+
+  // Soft delete
+  const project = await Project.findOneAndUpdate(
+    { _id: id, company: user.company._id },
+    { isActive: false },
+    { new: true }
+  )
+
+  if (!project) return notFound("Project not found")
+
+  await ActivityLog.create({
+    user: user._id,
+    company: user.company._id,
+    action: "deleted_project",
+    entityType: "Project",
+    entityId: project._id.toString(),
+    description: `${user.name} deleted project "${project.name}"`,
+  })
+
+  return ok({ message: "Project deleted" })
+})

@@ -1,9 +1,8 @@
 "use client"
 
-import type React from "react"
-import { createContext, useContext, useState, useEffect } from "react"
+import React, { createContext, useContext, useState, useEffect, useCallback } from "react"
 import { useRouter } from "next/navigation"
-import { useToast } from "@/hooks/use-toast"
+import { toast } from "@/hooks/use-toast"
 
 interface Company {
   _id: string
@@ -17,12 +16,13 @@ interface User {
   email: string
   role: string
   company: Company
-  avatar?: string
   isCompanyAdmin?: boolean
+  isActive?: boolean
 }
 
 interface AuthContextType {
   user: User | null
+  loading: boolean
   login: (email: string, password: string, companyName: string) => Promise<boolean>
   register: (
     name: string,
@@ -32,90 +32,70 @@ interface AuthContextType {
     companyName: string,
     isAdmin?: boolean,
     companyDescription?: string,
-    industry?: string,
+    industry?: string
   ) => Promise<boolean>
   logout: () => void
-  loading: boolean
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
+
+function getToken(): string | null {
+  if (typeof window === "undefined") return null
+  return localStorage.getItem("token")
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
   const router = useRouter()
-  const { toast } = useToast()
 
-  useEffect(() => {
-    checkAuth()
-  }, [])
-
-  const checkAuth = async () => {
+  const checkAuth = useCallback(async () => {
+    const token = getToken()
+    if (!token) {
+      setLoading(false)
+      return
+    }
     try {
-      const token = localStorage.getItem("token")
-      if (!token) {
-        setLoading(false)
-        return
-      }
-
-      const response = await fetch("/api/auth/me", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+      const res = await fetch("/api/auth/me", {
+        headers: { Authorization: `Bearer ${token}` },
       })
-
-      if (response.ok) {
-        const userData = await response.json()
-        setUser(userData)
+      if (res.ok) {
+        const data = await res.json()
+        setUser(data)
       } else {
         localStorage.removeItem("token")
-        localStorage.removeItem("companyName")
-        localStorage.removeItem("companyId")
+        setUser(null)
       }
-    } catch (error) {
-      console.error("Auth check failed:", error)
+    } catch {
       localStorage.removeItem("token")
-      localStorage.removeItem("companyName")
-      localStorage.removeItem("companyId")
+      setUser(null)
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    checkAuth()
+  }, [checkAuth])
 
   const login = async (email: string, password: string, companyName: string): Promise<boolean> => {
     try {
-      const response = await fetch("/api/auth/login", {
+      const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password, companyName }),
       })
-
-      const data = await response.json()
-
-      if (response.ok) {
+      const data = await res.json()
+      if (res.ok) {
         localStorage.setItem("token", data.token)
-        localStorage.setItem("companyName", data.company.name)
-        localStorage.setItem("companyId", data.company._id)
         setUser(data.user)
-        toast({
-          title: "Login Successful! 🎉",
-          description: `Welcome back, ${data.user.name}!`,
-        })
+        toast({ title: "Welcome back!", description: `Signed in as ${data.user.name}` })
         return true
-      } else {
-        toast({
-          title: "Login Failed",
-          description: data.message || "Invalid credentials",
-          variant: "destructive",
-        })
-        return false
       }
-    } catch (error) {
-      toast({
-        title: "Login Error",
-        description: "Something went wrong. Please try again.",
-        variant: "destructive",
-      })
+      toast({ title: "Sign in failed", description: data.message, variant: "destructive" })
+      return false
+    } catch {
+      toast({ title: "Sign in failed", description: "Check your connection and try again", variant: "destructive" })
       return false
     }
   }
@@ -128,78 +108,55 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     companyName: string,
     isAdmin?: boolean,
     companyDescription?: string,
-    industry?: string,
+    industry?: string
   ): Promise<boolean> => {
     try {
-      const response = await fetch("/api/auth/register", {
+      const res = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name,
-          email,
-          password,
-          role,
-          companyName,
-          isAdmin,
-          companyDescription,
-          industry,
-        }),
+        body: JSON.stringify({ name, email, password, role, companyName, isAdmin, companyDescription, industry }),
       })
-
-      const data = await response.json()
-
-      if (response.ok) {
-        toast({
-          title: "Registration Successful! 🎉",
-          description: "Please login with your credentials.",
-        })
+      const data = await res.json()
+      if (res.ok) {
+        toast({ title: "Account created", description: "Sign in to continue" })
         return true
-      } else {
-        toast({
-          title: "Registration Failed",
-          description: data.message || "Registration failed",
-          variant: "destructive",
-        })
-        return false
       }
-    } catch (error) {
-      toast({
-        title: "Registration Error",
-        description: "Something went wrong. Please try again.",
-        variant: "destructive",
-      })
+      toast({ title: "Registration failed", description: data.message, variant: "destructive" })
+      return false
+    } catch {
+      toast({ title: "Registration failed", description: "Check your connection and try again", variant: "destructive" })
       return false
     }
   }
 
   const logout = async () => {
+    const token = getToken()
     try {
-      await fetch("/api/auth/logout", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      })
-    } catch (error) {
-      console.error("Logout error:", error)
+      if (token) {
+        await fetch("/api/auth/logout", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        })
+      }
+    } catch {
+      // Ignore — still clear local state
     } finally {
       localStorage.removeItem("token")
-      localStorage.removeItem("companyName")
-      localStorage.removeItem("companyId")
       setUser(null)
       router.push("/login")
-      toast({
-        title: "Logged Out",
-        description: "You have been successfully logged out.",
-      })
+      toast({ title: "Signed out" })
     }
   }
 
-  return <AuthContext.Provider value={{ user, login, register, logout, loading }}>{children}</AuthContext.Provider>
+  return (
+    <AuthContext.Provider value={{ user, loading, login, register, logout }}>
+      {children}
+    </AuthContext.Provider>
+  )
 }
 
 export function useAuth() {
-  const context = useContext(AuthContext)
-  if (context === undefined) {
-    throw new Error("useAuth must be used within an AuthProvider")
-  }
-  return context
+  const ctx = useContext(AuthContext)
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider")
+  return ctx
 }

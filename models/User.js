@@ -6,6 +6,7 @@ const UserSchema = new mongoose.Schema(
     name: {
       type: String,
       required: [true, "Please provide a name"],
+      trim: true,
       maxlength: [60, "Name cannot be more than 60 characters"],
     },
     email: {
@@ -13,6 +14,7 @@ const UserSchema = new mongoose.Schema(
       required: [true, "Please provide an email"],
       unique: true,
       lowercase: true,
+      trim: true,
     },
     password: {
       type: String,
@@ -33,10 +35,6 @@ const UserSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
-    avatar: {
-      type: String,
-      default: "",
-    },
     isActive: {
       type: Boolean,
       default: true,
@@ -50,27 +48,13 @@ const UserSchema = new mongoose.Schema(
         enum: ["light", "dark", "system"],
         default: "system",
       },
-      notifications: {
-        email: {
-          type: Boolean,
-          default: true,
-        },
-        browser: {
-          type: Boolean,
-          default: true,
-        },
-      },
     },
   },
-  {
-    timestamps: true,
-  },
+  { timestamps: true }
 )
 
-// Hash password before saving
 UserSchema.pre("save", async function (next) {
   if (!this.isModified("password")) return next()
-
   try {
     const salt = await bcrypt.genSalt(12)
     this.password = await bcrypt.hash(this.password, salt)
@@ -80,9 +64,16 @@ UserSchema.pre("save", async function (next) {
   }
 })
 
-// Compare password method
 UserSchema.methods.comparePassword = async function (candidatePassword) {
   return bcrypt.compare(candidatePassword, this.password)
 }
+
+// Never return password in queries by default
+UserSchema.set("toJSON", {
+  transform(_, ret) {
+    delete ret.password
+    return ret
+  },
+})
 
 export default mongoose.models.User || mongoose.model("User", UserSchema)

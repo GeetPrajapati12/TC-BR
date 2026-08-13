@@ -5,17 +5,20 @@ const ProjectSchema = new mongoose.Schema(
     name: {
       type: String,
       required: [true, "Please provide a project name"],
+      trim: true,
       maxlength: [100, "Project name cannot be more than 100 characters"],
     },
     key: {
       type: String,
       required: [true, "Please provide a project key"],
       uppercase: true,
+      trim: true,
       maxlength: [10, "Project key cannot be more than 10 characters"],
     },
     description: {
       type: String,
       maxlength: [1000, "Description cannot be more than 1000 characters"],
+      default: "",
     },
     type: {
       type: String,
@@ -34,19 +37,13 @@ const ProjectSchema = new mongoose.Schema(
     },
     members: [
       {
-        user: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "User",
-        },
+        user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
         role: {
           type: String,
           enum: ["Admin", "Lead", "Developer", "Tester", "Viewer"],
           default: "Tester",
         },
-        joinedAt: {
-          type: Date,
-          default: Date.now,
-        },
+        joinedAt: { type: Date, default: Date.now },
       },
     ],
     status: {
@@ -59,38 +56,13 @@ const ProjectSchema = new mongoose.Schema(
       enum: ["Low", "Medium", "High", "Critical"],
       default: "Medium",
     },
-    startDate: {
-      type: Date,
-      default: Date.now,
-    },
-    endDate: {
-      type: Date,
-    },
-    isActive: {
-      type: Boolean,
-      default: true,
-    },
-    settings: {
-      allowBugReporting: {
-        type: Boolean,
-        default: true,
-      },
-      allowTestCaseCreation: {
-        type: Boolean,
-        default: true,
-      },
-      requireApproval: {
-        type: Boolean,
-        default: false,
-      },
-    },
+    startDate: { type: Date, default: Date.now },
+    endDate: { type: Date },
+    isActive: { type: Boolean, default: true },
   },
-  {
-    timestamps: true,
-  },
+  { timestamps: true }
 )
 
-// Ensure unique project key within company
 ProjectSchema.index({ key: 1, company: 1 }, { unique: true })
 
 export default mongoose.models.Project || mongoose.model("Project", ProjectSchema)

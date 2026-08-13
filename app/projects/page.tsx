@@ -1,535 +1,364 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { Search, Plus, Star, StarOff, Eye, Edit, Trash2, Users, Calendar, Activity, LogOut, User, RefreshCw } from 'lucide-react'
+import { AppHeader } from "@/components/app-header"
+import { PageLoader } from "@/components/ui/loading-spinner"
+import { EmptyState } from "@/components/ui/empty-state"
+import {
+  Search, Plus, Star, StarOff, Eye, RefreshCw,
+  Users, Calendar, FolderKanban, Layers,
+} from "lucide-react"
 import { useAuth } from "@/contexts/AuthContext"
 import { useToast } from "@/hooks/use-toast"
+import { formatDate } from "@/lib/utils"
 
 interface Project {
   _id: string
   name: string
   key: string
-  description: string
+  description?: string
   type: string
-  lead: {
-    _id: string
-    name: string
-    email: string
-    role: string
-  }
-  members: Array<{
-    user: {
-      _id: string
-      name: string
-      email: string
-      role: string
-    }
-    role: string
-    joinedAt: string
-  }>
+  lead: { _id: string; name: string; email: string; role: string }
+  members: Array<{ user: { _id: string; name: string }; role: string }>
   status: string
   priority: string
   createdAt: string
   updatedAt: string
-  isStarred?: boolean
+}
+
+const STATUS_COLORS: Record<string, string> = {
+  Active: "bg-emerald-100 text-emerald-700",
+  Planning: "bg-blue-100 text-blue-700",
+  "On Hold": "bg-amber-100 text-amber-700",
+  Completed: "bg-purple-100 text-purple-700",
+  Archived: "bg-gray-100 text-gray-600",
+}
+
+const PRIORITY_COLORS: Record<string, string> = {
+  Critical: "bg-red-100 text-red-700",
+  High: "bg-orange-100 text-orange-700",
+  Medium: "bg-yellow-100 text-yellow-700",
+  Low: "bg-green-100 text-green-700",
+}
+
+const EMPTY_PROJECT = {
+  name: "", key: "", description: "", type: "Web Application", priority: "Medium",
 }
 
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([])
-  const [filteredProjects, setFilteredProjects] = useState<Project[]>([])
   const [searchTerm, setSearchTerm] = useState("")
   const [typeFilter, setTypeFilter] = useState("all")
   const [loading, setLoading] = useState(true)
-  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
-  const [starredProjects, setStarredProjects] = useState<Set<string>>(new Set())
-  const { user, logout } = useAuth()
+  const [creating, setCreating] = useState(false)
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [starred, setStarred] = useState<Set<string>>(new Set())
+  const [newProject, setNewProject] = useState(EMPTY_PROJECT)
+  const { user } = useAuth()
   const { toast } = useToast()
   const router = useRouter()
 
-  const [newProject, setNewProject] = useState({
-    name: "",
-    key: "",
-    description: "",
-    type: "Web Application",
-    priority: "Medium",
-  })
-
-  useEffect(() => {
-    if (!user) {
-      router.push("/login")
-      return
-    }
-    fetchProjects()
-  }, [user, router])
-
-  useEffect(() => {
-    filterProjects()
-  }, [projects, searchTerm, typeFilter])
-
-  const fetchProjects = async () => {
-    if (!user) return
-
+  const fetchProjects = useCallback(async () => {
     setLoading(true)
     try {
       const token = localStorage.getItem("token")
-      const response = await fetch("/api/projects", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+      const res = await fetch("/api/projects", {
+        headers: { Authorization: `Bearer ${token}` },
       })
-
-      if (response.ok) {
-        const data = await response.json()
-        setProjects(data)
+      if (res.ok) {
+        setProjects(await res.json())
       } else {
-        toast({
-          title: "Error",
-          description: "Failed to fetch projects",
-          variant: "destructive",
-        })
+        toast({ title: "Error", description: "Failed to load projects", variant: "destructive" })
       }
-    } catch (error) {
-      console.error("Failed to fetch projects:", error)
-      toast({
-        title: "Error",
-        description: "Failed to fetch projects",
-        variant: "destructive",
-      })
+    } catch {
+      toast({ title: "Error", description: "Failed to load projects", variant: "destructive" })
     } finally {
       setLoading(false)
     }
-  }
+  }, [toast])
 
-  const filterProjects = () => {
-    let filtered = projects
+  useEffect(() => {
+    if (!user) { router.push("/login"); return }
+    fetchProjects()
+    const saved = localStorage.getItem("starredProjects")
+    if (saved) setStarred(new Set(JSON.parse(saved)))
+  }, [user, router, fetchProjects])
 
-    if (searchTerm) {
-      filtered = filtered.filter(
-        (project) =>
-          project.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          project.key.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          project.lead.name.toLowerCase().includes(searchTerm.toLowerCase()),
-      )
-    }
-
-    if (typeFilter !== "all") {
-      filtered = filtered.filter((project) => project.type === typeFilter)
-    }
-
-    // Sort starred projects first
-    filtered.sort((a, b) => {
-      const aStarred = starredProjects.has(a._id)
-      const bStarred = starredProjects.has(b._id)
-      if (aStarred && !bStarred) return -1
-      if (!aStarred && bStarred) return 1
-      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+  const toggleStar = (id: string) => {
+    setStarred((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      localStorage.setItem("starredProjects", JSON.stringify([...next]))
+      return next
     })
-
-    setFilteredProjects(filtered)
   }
 
   const createProject = async () => {
     if (!newProject.name.trim() || !newProject.key.trim()) {
-      toast({
-        title: "Validation Error",
-        description: "Project name and key are required",
-        variant: "destructive",
-      })
+      toast({ title: "Validation error", description: "Name and key are required", variant: "destructive" })
       return
     }
-
+    setCreating(true)
     try {
       const token = localStorage.getItem("token")
-      const response = await fetch("/api/projects", {
+      const res = await fetch("/api/projects", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(newProject),
       })
-
-      if (response.ok) {
-        const createdProject = await response.json()
-        setProjects([createdProject, ...projects])
-        setIsCreateDialogOpen(false)
-        setNewProject({
-          name: "",
-          key: "",
-          description: "",
-          type: "Web Application",
-          priority: "Medium",
-        })
-
-        toast({
-          title: "Project Created! 🎉",
-          description: `Project "${createdProject.name}" has been created successfully`,
-        })
+      const data = await res.json()
+      if (res.ok) {
+        setProjects((prev) => [data, ...prev])
+        setDialogOpen(false)
+        setNewProject(EMPTY_PROJECT)
+        toast({ title: "Project created", description: `"${data.name}" is ready` })
       } else {
-        const error = await response.json()
-        toast({
-          title: "Creation Failed",
-          description: error.message || "Failed to create project",
-          variant: "destructive",
-        })
+        toast({ title: "Failed to create", description: data.message, variant: "destructive" })
       }
-    } catch (error) {
-      toast({
-        title: "Creation Failed",
-        description: "Failed to create project. Please try again.",
-        variant: "destructive",
-      })
+    } catch {
+      toast({ title: "Failed to create", description: "Check your connection", variant: "destructive" })
+    } finally {
+      setCreating(false)
     }
   }
 
-  const toggleStar = (projectId: string) => {
-    const newStarred = new Set(starredProjects)
-    if (newStarred.has(projectId)) {
-      newStarred.delete(projectId)
-    } else {
-      newStarred.add(projectId)
-    }
-    setStarredProjects(newStarred)
-    // Save to localStorage
-    localStorage.setItem("starredProjects", JSON.stringify(Array.from(newStarred)))
-  }
+  const filtered = projects
+    .filter((p) => {
+      const q = searchTerm.toLowerCase()
+      const matchesSearch = !q || p.name.toLowerCase().includes(q) || p.key.toLowerCase().includes(q) || p.lead.name.toLowerCase().includes(q)
+      const matchesType = typeFilter === "all" || p.type === typeFilter
+      return matchesSearch && matchesType
+    })
+    .sort((a, b) => {
+      const aS = starred.has(a._id), bS = starred.has(b._id)
+      if (aS !== bS) return aS ? -1 : 1
+      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+    })
 
-  const openProject = (projectId: string) => {
-    router.push(`/projects/${projectId}`)
-  }
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "Active":
-        return "bg-green-100 text-green-800"
-      case "Planning":
-        return "bg-blue-100 text-blue-800"
-      case "On Hold":
-        return "bg-yellow-100 text-yellow-800"
-      case "Completed":
-        return "bg-purple-100 text-purple-800"
-      case "Archived":
-        return "bg-gray-100 text-gray-800"
-      default:
-        return "bg-gray-100 text-gray-800"
-    }
-  }
-
-  const getPriorityColor = (priority: string) => {
-    switch (priority) {
-      case "Critical":
-        return "bg-red-100 text-red-800"
-      case "High":
-        return "bg-orange-100 text-orange-800"
-      case "Medium":
-        return "bg-yellow-100 text-yellow-800"
-      case "Low":
-        return "bg-green-100 text-green-800"
-      default:
-        return "bg-gray-100 text-gray-800"
-    }
-  }
-
-  // Load starred projects from localStorage on mount
-  useEffect(() => {
-    const saved = localStorage.getItem("starredProjects")
-    if (saved) {
-      setStarredProjects(new Set(JSON.parse(saved)))
-    }
-  }, [])
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-4" />
-          <p className="text-muted-foreground">Loading projects...</p>
-        </div>
-      </div>
-    )
-  }
+  if (loading) return <PageLoader label="Loading projects…" />
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white border-b">
-        <div className="container mx-auto px-6 py-4">
-          <div className="flex justify-between items-center">
-            <div>
-              <h1 className="text-2xl font-bold">Projects</h1>
-              <p className="text-muted-foreground">Manage your QA projects and test cases</p>
-            </div>
-            <div className="flex items-center gap-4">
-              <div className="text-right">
-                <div className="flex items-center gap-2">
-                  <User className="w-4 h-4" />
-                  <span className="font-medium">{user?.name}</span>
-                  <Badge variant="outline">{user?.role}</Badge>
-                </div>
-                <p className="text-sm text-muted-foreground">{user?.email}</p>
-              </div>
-              <Button variant="outline" size="sm" onClick={logout}>
-                <LogOut className="w-4 h-4 mr-2" />
-                Logout
-              </Button>
-            </div>
+      <AppHeader breadcrumbs={[{ label: "Projects" }]} />
+
+      <main className="container mx-auto px-6 py-8 max-w-7xl">
+        {/* Page title + action */}
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold">Projects</h1>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              {projects.length} project{projects.length !== 1 ? "s" : ""} in your workspace
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={fetchProjects}>
+              <RefreshCw className="w-4 h-4" />
+            </Button>
+            <Button size="sm" onClick={() => setDialogOpen(true)}>
+              <Plus className="w-4 h-4 mr-1.5" />
+              New Project
+            </Button>
           </div>
         </div>
-      </div>
 
-      {/* Main Content */}
-      <div className="container mx-auto px-6 py-8">
-        {/* Controls */}
-        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between mb-6">
-          <div className="flex flex-col sm:flex-row gap-2 flex-1">
-            <div className="relative flex-1 max-w-sm">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-              <Input
-                placeholder="Search projects"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-            <Select value={typeFilter} onValueChange={setTypeFilter}>
-              <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Filter by product" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="Web Application">Web Application</SelectItem>
-                <SelectItem value="Mobile App">Mobile App</SelectItem>
-                <SelectItem value="API">API</SelectItem>
-                <SelectItem value="Desktop App">Desktop App</SelectItem>
-                <SelectItem value="Game">Game</SelectItem>
-                <SelectItem value="Other">Other</SelectItem>
-              </SelectContent>
-            </Select>
+        {/* Filters */}
+        <div className="flex flex-col sm:flex-row gap-3 mb-6">
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              placeholder="Search projects…"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-9 bg-white"
+            />
           </div>
-          <Button onClick={() => setIsCreateDialogOpen(true)} className="bg-blue-600 hover:bg-blue-700">
-            <Plus className="w-4 h-4 mr-2" />
-            Create project
-          </Button>
+          <Select value={typeFilter} onValueChange={setTypeFilter}>
+            <SelectTrigger className="w-48 bg-white">
+              <SelectValue placeholder="All types" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Types</SelectItem>
+              {["Web Application", "Mobile App", "API", "Desktop App", "Game", "Other"].map((t) => (
+                <SelectItem key={t} value={t}>{t}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
-        {/* Projects Table */}
-        <Card>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow className="border-b">
-                  <TableHead className="w-12"></TableHead>
-                  <TableHead className="font-semibold">Name ↓</TableHead>
-                  <TableHead className="font-semibold">Key</TableHead>
-                  <TableHead className="font-semibold">Type</TableHead>
-                  <TableHead className="font-semibold">Lead</TableHead>
-                  <TableHead className="font-semibold">Status</TableHead>
-                  <TableHead className="font-semibold">Priority</TableHead>
-                  <TableHead className="font-semibold">Members</TableHead>
-                  <TableHead className="font-semibold">Created</TableHead>
-                  <TableHead className="font-semibold">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredProjects.map((project) => (
-                  <TableRow key={project._id} className="hover:bg-gray-50 cursor-pointer">
-                    <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          toggleStar(project._id)
-                        }}
-                        className="p-1 h-auto"
-                      >
-                        {starredProjects.has(project._id) ? (
-                          <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
-                        ) : (
-                          <StarOff className="w-4 h-4 text-gray-400" />
-                        )}
-                      </Button>
-                    </TableCell>
-                    <TableCell onClick={() => openProject(project._id)}>
-                      <div>
-                        <div className="font-medium">{project.name}</div>
-                        {project.description && (
-                          <div className="text-sm text-muted-foreground truncate max-w-[200px]">
-                            {project.description}
-                          </div>
-                        )}
+        {/* Project grid */}
+        {filtered.length === 0 ? (
+          <EmptyState
+            icon={FolderKanban}
+            title="No projects found"
+            description={searchTerm || typeFilter !== "all" ? "Try adjusting your filters" : "Create your first project to get started"}
+            action={
+              !searchTerm && typeFilter === "all" ? (
+                <Button size="sm" onClick={() => setDialogOpen(true)}>
+                  <Plus className="w-4 h-4 mr-1.5" />
+                  Create Project
+                </Button>
+              ) : undefined
+            }
+          />
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filtered.map((project) => (
+              <Card
+                key={project._id}
+                className="group bg-white border hover:border-blue-200 hover:shadow-md transition-all cursor-pointer"
+                onClick={() => router.push(`/projects/${project._id}`)}
+              >
+                <CardContent className="p-5">
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="p-1.5 bg-blue-50 rounded-lg shrink-0">
+                        <Layers className="w-4 h-4 text-blue-600" />
                       </div>
-                    </TableCell>
-                    <TableCell onClick={() => openProject(project._id)}>
-                      <Badge variant="outline" className="font-mono">
-                        {project.key}
-                      </Badge>
-                    </TableCell>
-                    <TableCell onClick={() => openProject(project._id)}>{project.type}</TableCell>
-                    <TableCell onClick={() => openProject(project._id)}>
-                      <div>
-                        <div className="font-medium">{project.lead.name}</div>
-                        <div className="text-sm text-muted-foreground">{project.lead.role}</div>
+                      <div className="min-w-0">
+                        <h3 className="font-semibold text-sm truncate group-hover:text-blue-600 transition-colors">
+                          {project.name}
+                        </h3>
+                        <span className="text-xs text-muted-foreground font-mono">{project.key}</span>
                       </div>
-                    </TableCell>
-                    <TableCell onClick={() => openProject(project._id)}>
-                      <Badge className={getStatusColor(project.status)}>{project.status}</Badge>
-                    </TableCell>
-                    <TableCell onClick={() => openProject(project._id)}>
-                      <Badge className={getPriorityColor(project.priority)}>{project.priority}</Badge>
-                    </TableCell>
-                    <TableCell onClick={() => openProject(project._id)}>
-                      <div className="flex items-center gap-1">
-                        <Users className="w-4 h-4 text-muted-foreground" />
-                        <span>{project.members.length}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell onClick={() => openProject(project._id)}>
-                      <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                        <Calendar className="w-4 h-4" />
-                        {new Date(project.createdAt).toLocaleDateString()}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            openProject(project._id)
-                          }}
-                          className="text-blue-600 hover:text-blue-800"
-                          title="Open Project"
-                        >
-                          <Eye className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            {filteredProjects.length === 0 && (
-              <div className="text-center py-12">
-                <Activity className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                <h3 className="text-lg font-semibold mb-2">No projects found</h3>
-                <p className="text-muted-foreground mb-4">
-                  {searchTerm || typeFilter !== "all"
-                    ? "Try adjusting your search or filters"
-                    : "Get started by creating your first project"}
-                </p>
-                {!searchTerm && typeFilter === "all" && (
-                  <Button onClick={() => setIsCreateDialogOpen(true)} className="bg-blue-600 hover:bg-blue-700">
-                    <Plus className="w-4 h-4 mr-2" />
-                    Create your first project
-                  </Button>
-                )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+                    </div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); toggleStar(project._id) }}
+                      className="shrink-0 ml-2 text-muted-foreground hover:text-amber-500 transition-colors"
+                    >
+                      {starred.has(project._id)
+                        ? <Star className="w-4 h-4 fill-amber-400 text-amber-400" />
+                        : <StarOff className="w-4 h-4" />
+                      }
+                    </button>
+                  </div>
+
+                  {project.description && (
+                    <p className="text-xs text-muted-foreground mb-3 line-clamp-2">{project.description}</p>
+                  )}
+
+                  <div className="flex flex-wrap gap-1.5 mb-4">
+                    <Badge className={`text-xs ${STATUS_COLORS[project.status] ?? "bg-gray-100 text-gray-600"}`}>
+                      {project.status}
+                    </Badge>
+                    <Badge className={`text-xs ${PRIORITY_COLORS[project.priority] ?? "bg-gray-100 text-gray-600"}`}>
+                      {project.priority}
+                    </Badge>
+                    <Badge variant="outline" className="text-xs">{project.type}</Badge>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs text-muted-foreground border-t pt-3">
+                    <div className="flex items-center gap-1">
+                      <Users className="w-3.5 h-3.5" />
+                      <span>{project.members.length} member{project.members.length !== 1 ? "s" : ""}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Calendar className="w-3.5 h-3.5" />
+                      <span>{formatDate(project.updatedAt)}</span>
+                    </div>
+                    <Eye className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity text-blue-500" />
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+      </main>
 
       {/* Create Project Dialog */}
-      <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-        <DialogContent className="max-w-2xl">
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Create New Project</DialogTitle>
+            <DialogTitle>New Project</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="space-y-4 mt-2">
             <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="projectName">Project Name *</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="pName">Project Name *</Label>
                 <Input
-                  id="projectName"
-                  placeholder="Enter project name"
+                  id="pName"
+                  placeholder="My Project"
                   value={newProject.name}
-                  onChange={(e) => setNewProject({ ...newProject, name: e.target.value })}
+                  onChange={(e) => {
+                    const name = e.target.value
+                    const key = name.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6)
+                    setNewProject((p) => ({ ...p, name, key }))
+                  }}
                 />
               </div>
-              <div>
-                <Label htmlFor="projectKey">Project Key *</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="pKey">Project Key *</Label>
                 <Input
-                  id="projectKey"
-                  placeholder="e.g., PROJ"
+                  id="pKey"
+                  placeholder="MYPRJ"
                   value={newProject.key}
                   onChange={(e) =>
-                    setNewProject({ ...newProject, key: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "") })
+                    setNewProject((p) => ({ ...p, key: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10) }))
                   }
                   maxLength={10}
                 />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Short identifier (max 10 chars, letters and numbers only)
-                </p>
+                <p className="text-xs text-muted-foreground">Up to 10 uppercase letters &amp; numbers</p>
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="projectType">Project Type</Label>
-                <Select value={newProject.type} onValueChange={(value) => setNewProject({ ...newProject, type: value })}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+              <div className="space-y-1.5">
+                <Label>Type</Label>
+                <Select value={newProject.type} onValueChange={(v) => setNewProject((p) => ({ ...p, type: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Web Application">Web Application</SelectItem>
-                    <SelectItem value="Mobile App">Mobile App</SelectItem>
-                    <SelectItem value="API">API</SelectItem>
-                    <SelectItem value="Desktop App">Desktop App</SelectItem>
-                    <SelectItem value="Game">Game</SelectItem>
-                    <SelectItem value="Other">Other</SelectItem>
+                    {["Web Application", "Mobile App", "API", "Desktop App", "Game", "Other"].map((t) => (
+                      <SelectItem key={t} value={t}>{t}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
-              <div>
-                <Label htmlFor="projectPriority">Priority</Label>
-                <Select
-                  value={newProject.priority}
-                  onValueChange={(value) => setNewProject({ ...newProject, priority: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+              <div className="space-y-1.5">
+                <Label>Priority</Label>
+                <Select value={newProject.priority} onValueChange={(v) => setNewProject((p) => ({ ...p, priority: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Low">Low</SelectItem>
-                    <SelectItem value="Medium">Medium</SelectItem>
-                    <SelectItem value="High">High</SelectItem>
-                    <SelectItem value="Critical">Critical</SelectItem>
+                    {["Low", "Medium", "High", "Critical"].map((p) => (
+                      <SelectItem key={p} value={p}>{p}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
             </div>
 
-            <div>
-              <Label htmlFor="projectDescription">Description</Label>
+            <div className="space-y-1.5">
+              <Label>Description <span className="text-muted-foreground font-normal">(optional)</span></Label>
               <Textarea
-                id="projectDescription"
-                placeholder="Brief description of the project"
+                placeholder="What is this project about?"
                 value={newProject.description}
-                onChange={(e) => setNewProject({ ...newProject, description: e.target.value })}
-                rows={3}
+                onChange={(e) => setNewProject((p) => ({ ...p, description: e.target.value }))}
+                rows={2}
               />
             </div>
 
-            <div className="flex gap-2 pt-4">
-              <Button onClick={createProject} className="flex-1">
-                <Plus className="w-4 h-4 mr-2" />
-                Create Project
+            <div className="flex gap-2 pt-2">
+              <Button onClick={createProject} className="flex-1" disabled={creating}>
+                {creating ? (
+                  <span className="flex items-center gap-2">
+                    <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Creating…
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-2">
+                    <Plus className="w-4 h-4" />
+                    Create Project
+                  </span>
+                )}
               </Button>
-              <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
-                Cancel
-              </Button>
+              <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
             </div>
           </div>
         </DialogContent>
